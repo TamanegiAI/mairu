@@ -1,0 +1,2 @@
+# mairu
+automation
