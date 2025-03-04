@@ -1,0 +1,19 @@
+# Ignore SQLite database file
+app.db
+
+# Ignore alembic migrations (except versions folder)
+alembic/versions/*.pyc
+alembic/versions/__pycache__/
+
+# Ignore compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environment (if using venv)
+venv/
+.env
+
+# Ignore VS Code settings (optional)
+.vscode/
