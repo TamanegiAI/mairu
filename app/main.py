@@ -23,6 +23,9 @@ from app.services.gmail import GmailService
 from app.services.scheduler import email_scheduler
 from typing import List
 from datetime import datetime
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.services.database import DatabaseService
 
 app = FastAPI(title="Google Docs Automation API")
 
@@ -35,36 +38,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global storage for tokens (replace with proper database in production)
-fake_db = {}
-
 @app.get("/auth/url")
 async def get_auth_url(auth: GoogleAuth = Depends(get_google_auth)):
     return {"authorization_url": auth.get_authorization_url()}
 
 @app.get("/auth/callback")
-async def auth_callback(code: str, auth: GoogleAuth = Depends(get_google_auth)):
+async def auth_callback(
+    code: str,
+    db: Session = Depends(get_db),
+    auth: GoogleAuth = Depends(get_google_auth)
+):
     tokens = auth.get_tokens(code)
     
-    # Store tokens in the global fake_db
-    global fake_db  # Use the global fake_db
-    fake_db["access_token"] = tokens["token"]
-    fake_db["refresh_token"] = tokens["refresh_token"]
-    
-    print(f"🔍 DEBUG: Stored access token in fake_db: {fake_db['access_token'][:20]}...")  # Debug print
+    # Store tokens in the database
+    DatabaseService.save_tokens(
+        db,
+        access_token=tokens["token"],
+        refresh_token=tokens["refresh_token"]
+    )
     
     return {"message": "Authentication successful", "access_token": tokens["token"]}
 
 @app.get("/sheets", response_model=List[SheetInfo])
-async def list_sheets(auth: GoogleAuth = Depends(get_google_auth)):
+async def list_sheets(
+    db: Session = Depends(get_db),
+    auth: GoogleAuth = Depends(get_google_auth)
+):
     try:
-        if "access_token" not in fake_db:
+        tokens = DatabaseService.get_latest_tokens(db)
+        if not tokens:
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
             
-        sheets_service = GoogleSheetsService(fake_db["access_token"])
+        sheets_service = GoogleSheetsService(tokens.access_token)
         sheets = sheets_service.list_sheets()
         return sheets
         
@@ -77,16 +85,18 @@ async def list_sheets(auth: GoogleAuth = Depends(get_google_auth)):
 @app.get("/columns/{sheet_id}", response_model=List[ColumnInfo])
 async def get_columns(
     sheet_id: str,
+    db: Session = Depends(get_db),
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        if "access_token" not in fake_db:
+        tokens = DatabaseService.get_latest_tokens(db)
+        if not tokens:
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
             
-        sheets_service = GoogleSheetsService(fake_db["access_token"])
+        sheets_service = GoogleSheetsService(tokens.access_token)
         columns = sheets_service.get_columns(sheet_id)
         return columns
         
@@ -99,21 +109,25 @@ async def get_columns(
 @app.post("/map_columns", response_model=MappingResponse)
 async def map_columns(
     mapping: ColumnMapping,
+    db: Session = Depends(get_db),
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        if "access_token" not in fake_db:
+        tokens = DatabaseService.get_latest_tokens(db)
+        if not tokens:
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
             
-        # Here you would typically:
-        # 1. Validate that the columns exist in the sheet
-        # 2. Validate that the template exists
-        # 3. Store the mapping for later use in document generation
+        # Store the mapping in the database
+        DatabaseService.save_column_mapping(
+            db,
+            sheet_id=mapping.sheet_id,
+            template_id=mapping.template_id,
+            mappings=mapping.mappings
+        )
         
-        # For now, we'll just echo back the mapping
         return MappingResponse(
             success=True,
             mapped_columns=mapping.mappings
@@ -128,17 +142,19 @@ async def map_columns(
 @app.post("/generate_document")
 async def generate_document(
     request: DocumentGeneration,
+    db: Session = Depends(get_db),
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        if "access_token" not in fake_db:
+        tokens = DatabaseService.get_latest_tokens(db)
+        if not tokens:
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
         
         # Get the sheet data
-        sheets_service = GoogleSheetsService(fake_db["access_token"])
+        sheets_service = GoogleSheetsService(tokens.access_token)
         
         # Get all data from the sheet
         sheet_data = sheets_service.get_sheet_data(request.sheet_id)
@@ -156,7 +172,7 @@ async def generate_document(
         data_mapping = dict(zip(headers, row_data))
         
         # Initialize Docs service
-        docs_service = GoogleDocsService(fake_db["access_token"])
+        docs_service = GoogleDocsService(tokens.access_token)
         
         # Create a new document based on the template
         template_doc = docs_service.get_document(request.template_id)
@@ -186,16 +202,18 @@ async def generate_document(
 @app.post("/send_email", response_model=EmailResponse)
 async def send_email(
     request: EmailRequest,
+    db: Session = Depends(get_db),
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        if "access_token" not in fake_db:
+        tokens = DatabaseService.get_latest_tokens(db)
+        if not tokens:
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
 
-        gmail_service = GmailService(fake_db["access_token"])
+        gmail_service = GmailService(tokens.access_token)
         result = gmail_service.send_email(
             to=request.to,
             subject=request.subject,
@@ -215,17 +233,20 @@ async def send_email(
 @app.post("/schedule_email", response_model=ScheduleEmailResponse)
 async def schedule_email(
     request: ScheduleEmail,
+    db: Session = Depends(get_db),
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        if "access_token" not in fake_db:
+        tokens = DatabaseService.get_latest_tokens(db)
+        if not tokens:
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
 
         result = email_scheduler.schedule_email(
-            access_token=fake_db["access_token"],
+            db=db,  # Pass db to scheduler
+            access_token=tokens.access_token,
             to=request.to,
             subject=request.subject,
             body=request.body,
