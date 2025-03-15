@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.services.auth import GoogleAuth
@@ -21,8 +21,8 @@ from app.services.sheets import GoogleSheetsService
 from app.services.docs import GoogleDocsService
 from app.services.gmail import GmailService
 from app.services.scheduler import email_scheduler
-from typing import List
-from datetime import datetime
+from typing import List, Optional
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.database import DatabaseService
@@ -48,35 +48,94 @@ async def auth_callback(
     db: Session = Depends(get_db),
     auth: GoogleAuth = Depends(get_google_auth)
 ):
-    tokens = auth.get_tokens(code)
-    
-    # Store tokens in the database
-    DatabaseService.save_tokens(
-        db,
-        access_token=tokens["token"],
-        refresh_token=tokens["refresh_token"]
-    )
-    
-    return {"message": "Authentication successful", "access_token": tokens["token"]}
+    try:
+        print(f"Processing auth code: {code[:10]}...")
+        
+        # Check if we already have recent tokens
+        existing_tokens = DatabaseService.get_latest_tokens(db)
+        if existing_tokens and (datetime.utcnow() - existing_tokens.created_at).total_seconds() < 60:
+            print("Recent tokens found, returning existing access token")
+            return {"message": "Authentication successful", "access_token": existing_tokens.access_token}
+        
+        tokens = auth.get_tokens(code)
+        
+        # Store tokens in the database
+        DatabaseService.save_tokens(
+            db,
+            access_token=tokens["token"],
+            refresh_token=tokens["refresh_token"],
+            expiry=datetime.utcnow() + timedelta(hours=1)  # Set explicit expiry
+        )
+        
+        return {"message": "Authentication successful", "access_token": tokens["token"]}
+    except Exception as e:
+        print(f"Auth callback error: {str(e)}")
+        raise HTTPException(
+            status_code=401,
+            detail=f"Authentication failed: {str(e)}"
+        )
 
 @app.get("/sheets", response_model=List[SheetInfo])
 async def list_sheets(
     db: Session = Depends(get_db),
-    auth: GoogleAuth = Depends(get_google_auth)
+    auth: GoogleAuth = Depends(get_google_auth),
+    authorization: Optional[str] = Header(None)
 ):
     try:
-        tokens = DatabaseService.get_latest_tokens(db)
-        if not tokens:
-            raise HTTPException(
-                status_code=401,
-                detail="No access token found. Please authenticate first."
-            )
+        token_info = None
+        
+        # First try to use the token from the Authorization header
+        if authorization and authorization.startswith("Bearer "):
+            access_token = authorization.replace("Bearer ", "")
+            print("🔍 Using token from Authorization header")
             
-        sheets_service = GoogleSheetsService(tokens.access_token)
+            # Get refresh token from database to enable refresh if needed
+            stored_tokens = DatabaseService.get_latest_tokens(db)
+            refresh_token = stored_tokens.refresh_token if stored_tokens else None
+            
+            token_info = {
+                'token': access_token,
+                'refresh_token': refresh_token,
+                'token_uri': 'https://oauth2.googleapis.com/token',
+                'client_id': auth.client_id,
+                'client_secret': auth.client_secret,
+                'scopes': auth.SCOPES
+            }
+        
+        # If no Authorization header or no token_info created, use database token
+        if not token_info:
+            print("🔍 Using token from database")
+            stored_tokens = DatabaseService.get_latest_tokens(db)
+            if not stored_tokens:
+                raise HTTPException(
+                    status_code=401,
+                    detail="No access token found. Please authenticate first."
+                )
+            
+            token_info = {
+                'token': stored_tokens.access_token,
+                'refresh_token': stored_tokens.refresh_token,
+                'token_uri': 'https://oauth2.googleapis.com/token',
+                'client_id': auth.client_id,
+                'client_secret': auth.client_secret,
+                'scopes': auth.SCOPES
+            }
+        
+        # Validate and refresh token if needed
+        print("🔄 Validating token...")
+        valid_token_info = await auth.validate_and_refresh_token(token_info, db)
+        
+        # Use the valid token to call Google Sheets API
+        sheets_service = GoogleSheetsService(valid_token_info['token'])
         sheets = sheets_service.list_sheets()
+        
         return sheets
         
+    except HTTPException as he:
+        # Re-raise HTTP exceptions as is
+        raise he
     except Exception as e:
+        print(f"❌ Error in list_sheets: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to list sheets: {str(e)}"
@@ -276,3 +335,18 @@ async def cancel_scheduled_email(
     if not result["success"]:
         raise HTTPException(status_code=404, detail=result["message"])
     return result
+
+@app.post("/auth/refresh")
+async def refresh_token(
+    token_info: TokenInfo,
+    db: Session = Depends(get_db),
+    auth: GoogleAuth = Depends(get_google_auth)
+):
+    try:
+        new_tokens = auth.refresh_token(token_info.dict())
+        return new_tokens
+    except Exception as e:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Token refresh failed: {str(e)}"
+        )

@@ -4,7 +4,10 @@ from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 from fastapi import HTTPException
 from app.config import get_settings
+from app.services.database import DatabaseService
 import json
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
 
 class GoogleAuth:
     SCOPES = [
@@ -82,36 +85,99 @@ class GoogleAuth:
             'scopes': flow.credentials.scopes
         }
 
-    def refresh_token(self, token_info: dict) -> dict:
+    def is_token_expired(self, token_info: dict) -> bool:
+        """Check if a token is expired or will expire soon (within 5 minutes)."""
         try:
+            # Create credentials object
+            credentials = Credentials(
+                token=token_info['token'],
+                refresh_token=token_info.get('refresh_token'),
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=self.client_id,
+                client_secret=self.client_secret,
+                scopes=self.SCOPES
+            )
+            
+            # If no expiry set, consider it expired
+            if not credentials.expiry:
+                return True
+                
+            # Check if token is expired or will expire in next 5 minutes
+            return credentials.expired or (
+                credentials.expiry - datetime.utcnow() < timedelta(minutes=5)
+            )
+        except Exception as e:
+            print(f"❌ ERROR checking token expiration: {str(e)}")
+            return True
+
+    def refresh_token(self, token_info: dict, db: Session = None) -> dict:
+        """Refresh the access token and save to database if provided."""
+        try:
+            if not token_info.get('refresh_token'):
+                raise HTTPException(
+                    status_code=401,
+                    detail="No refresh token available. Please re-authenticate."
+                )
+
             credentials = Credentials(
                 token=token_info['token'],
                 refresh_token=token_info['refresh_token'],
-                token_uri=token_info['token_uri'],
-                client_id=token_info['client_id'],
-                client_secret=token_info['client_secret'],
-                scopes=token_info['scopes']
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=self.client_id,
+                client_secret=self.client_secret,
+                scopes=self.SCOPES
             )
-            
-            if not credentials.refresh_token:
-                raise HTTPException(
-                    status_code=401,
-                    detail="No refresh token available. Please log in again."
+
+            # Refresh the token
+            request = Request()
+            credentials.refresh(request)
+
+            # Prepare the new token info
+            new_token_info = {
+                'token': credentials.token,
+                'refresh_token': credentials.refresh_token or token_info['refresh_token'],
+                'token_uri': credentials.token_uri,
+                'client_id': credentials.client_id,
+                'client_secret': credentials.client_secret,
+                'scopes': credentials.scopes,
+                'expiry': credentials.expiry.isoformat() if credentials.expiry else None
+            }
+
+            # Save to database if session provided
+            if db:
+                DatabaseService.save_tokens(
+                    db,
+                    access_token=new_token_info['token'],
+                    refresh_token=new_token_info['refresh_token'],
+                    expiry=credentials.expiry
                 )
-            
-            if credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-                return {
-                    'token': credentials.token,
-                    'refresh_token': credentials.refresh_token,
-                    'token_uri': credentials.token_uri,
-                    'client_id': credentials.client_id,
-                    'client_secret': credentials.client_secret,
-                    'scopes': credentials.scopes
-                }
-            return token_info
-        except RefreshError:
+                print("✅ Refreshed token saved to database")
+
+            return new_token_info
+
+        except RefreshError as e:
+            print(f"❌ Token refresh failed: {str(e)}")
             raise HTTPException(
                 status_code=401,
                 detail="Token refresh failed. Please re-authenticate."
+            )
+        except Exception as e:
+            print(f"❌ Unexpected error during token refresh: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Token refresh failed: {str(e)}"
+            )
+
+    async def validate_and_refresh_token(self, token_info: dict, db: Session) -> dict:
+        """Validate a token and refresh if necessary."""
+        try:
+            if self.is_token_expired(token_info):
+                print("🔄 Token expired, attempting refresh...")
+                return self.refresh_token(token_info, db)
+            return token_info
+        except Exception as e:
+            print(f"❌ Token validation failed: {str(e)}")
+            raise HTTPException(
+                status_code=401,
+                detail=f"Token validation failed: {str(e)}"
             ) 

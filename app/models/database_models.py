@@ -1,17 +1,23 @@
 from sqlalchemy import Column, Integer, String, DateTime, JSON, Boolean
 from sqlalchemy.sql import func
 from app.database import Base
+from datetime import datetime
 
 class Token(Base):
     __tablename__ = "tokens"
 
     id = Column(Integer, primary_key=True, index=True)
-    access_token = Column(String, index=True)
-    refresh_token = Column(String)
-    token_type = Column(String)
-    expiry = Column(DateTime)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, onupdate=func.now())
+    access_token = Column(String, nullable=False, index=True)
+    refresh_token = Column(String, nullable=False)
+    token_type = Column(String, default="bearer")
+    expiry = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.updated_at:
+            self.updated_at = datetime.utcnow()
 
 class ColumnMapping(Base):
     __tablename__ = "column_mappings"
