@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Google Docs Automation</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Google Docs Automation</h1>
+    
+    <!-- Authentication Section -->
+    <div id="auth-section">
+      <button id="auth-button" class="btn primary">Sign in with Google</button>
+      <button id="logout-button" class="btn secondary hidden">Logout</button>
+      <div id="auth-status" class="status"></div>
+    </div>
+    
+    <!-- Main Content (Hidden until authenticated) -->
+    <div id="main-content" class="hidden">
+      <!-- Step 1: Select Google Sheet -->
+      <div class="step" id="step-1">
+        <h2>Step 1: Select Google Sheet</h2>
+        <select id="sheet-select" class="select-input">
+          <option value="">Loading sheets...</option>
+        </select>
+        <button id="load-sheets-btn" class="btn secondary">Refresh Sheets</button>
+        <div id="loading-indicator" class="loading hidden">Loading...</div>
+      </div>
+      
+      <!-- Step 2: Select Template -->
+      <div class="step" id="step-2">
+        <h2>Step 2: Select Document Template</h2>
+        <input type="text" id="template-id" class="text-input" placeholder="Enter Google Doc Template ID">
+        <div class="help-text">Find the ID in the URL: docs.google.com/document/d/[ID]/edit</div>
+      </div>
+      
+      <!-- Step 3: Map Columns -->
+      <div class="step" id="step-3">
+        <h2>Step 3: Map Columns to Placeholders</h2>
+        <button id="load-columns-btn" class="btn secondary">Load Columns</button>
+        <div id="mapping-container" class="mapping-container">
+          <!-- Mapping fields will be added here dynamically -->
+        </div>
+      </div>
+      
+      <!-- Step 4: Email Configuration -->
+      <div class="step" id="step-4">
+        <h2>Step 4: Email Configuration</h2>
+        <div class="form-group">
+          <label for="row-index">Data Row (0 is header):</label>
+          <input type="number" id="row-index" class="text-input" min="1" value="1">
+        </div>
+        <div class="form-group">
+          <label for="email-to">To:</label>
+          <input type="email" id="email-to" class="text-input" placeholder="recipient@example.com">
+        </div>
+        <div class="form-group">
+          <label for="email-cc">CC:</label>
+          <input type="email" id="email-cc" class="text-input" placeholder="cc@example.com">
+        </div>
+        <div class="form-group">
+          <label for="email-subject">Subject:</label>
+          <input type="text" id="email-subject" class="text-input" placeholder="Email Subject">
+        </div>
+        <div class="form-group">
+          <label for="email-body">Body:</label>
+          <textarea id="email-body" class="text-area" placeholder="Email Body"></textarea>
+        </div>
+      </div>
+      
+      <!-- Step 5: Send or Schedule -->
+      <div class="step" id="step-5">
+        <h2>Step 5: Send or Schedule</h2>
+        <div class="button-group">
+          <button id="generate-doc-btn" class="btn primary">Generate Document</button>
+          <button id="send-email-btn" class="btn primary" disabled>Send Email</button>
+        </div>
+        
+        <div class="schedule-section">
+          <h3>Schedule Email</h3>
+          <div class="form-group">
+            <label for="schedule-datetime">Schedule Date/Time:</label>
+            <input type="datetime-local" id="schedule-datetime" class="text-input">
+          </div>
+          <button id="schedule-email-btn" class="btn secondary" disabled>Schedule Email</button>
+        </div>
+        
+        <div id="progress-bar" class="progress-bar hidden"></div>
+      </div>
+    </div>
+    
+    <!-- Status Messages -->
+    <div id="status-container" class="status-container">
+      <div id="status-message" class="status"></div>
+      <div id="error-message" class="error hidden"></div>
+      <div id="success-message" class="success hidden"></div>
+    </div>
+
+    <!-- History/Log Section -->
+    <div id="history-section" class="history-section">
+      <h2>History</h2>
+      <ul id="history-log">
+        <!-- History items will be added here dynamically -->
+      </ul>
+    </div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

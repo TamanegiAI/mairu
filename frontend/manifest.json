@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Google Docs Automation",
+  "version": "1.0",
+  "description": "Automate document generation and email sending using Google Sheets and Docs",
+  "permissions": [
+    "identity",
+    "storage",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://localhost:8000/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "images/icon16.png",
+      "48": "images/icon48.png",
+      "128": "images/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://docs.google.com/*", "https://sheets.google.com/*"],
+      "js": ["content.js"]
+    }
+  ],
+  "oauth2": {
+    "client_id": "556671924284-q76val7in7217fplto0ak3qn24drc52m.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/spreadsheets.readonly",
+      "https://www.googleapis.com/auth/documents",
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/drive.readonly"
+    ]
+  }
+} 
