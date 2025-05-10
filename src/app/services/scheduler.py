@@ -1,11 +1,11 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 from datetime import datetime
-from app.services.gmail import GmailService
+from src.app.services.gmail import GmailService
 from typing import Dict, Optional
 import pytz
 from sqlalchemy.orm import Session
-from app.services.database import DatabaseService
+from src.app.services.database import DatabaseService
 
 class EmailScheduler:
     def __init__(self):

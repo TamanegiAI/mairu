@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, JSON, Boolean
 from sqlalchemy.sql import func
-from app.database import Base
+from src.app.database import Base
 from datetime import datetime
 
 class Token(Base):
@@ -40,4 +40,4 @@ class ScheduledEmail(Base):
     document_id = Column(String, nullable=True)
     scheduled_time = Column(DateTime)
     status = Column(String)  # pending, sent, failed, cancelled
-    created_at = Column(DateTime, server_default=func.now()) 
+    created_at = Column(DateTime, server_default=func.now())

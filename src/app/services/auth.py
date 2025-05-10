@@ -3,9 +3,10 @@ from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 from fastapi import HTTPException
-from app.config import get_settings
-from app.services.database import DatabaseService
+from src.app.config import get_settings
+from src.app.services.database import DatabaseService
 import json
+import os
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
@@ -17,11 +18,58 @@ class GoogleAuth:
         'https://www.googleapis.com/auth/drive.readonly'
     ]
 
-    def __init__(self, client_id: str, client_secret: str, redirect_uri: str):
-        print(f"🔍 DEBUG: GoogleAuth initialized with client_id={client_id}")  # ✅ Debug statement
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.redirect_uri = redirect_uri
+    def __init__(self, client_id: str = None, client_secret: str = None, redirect_uri: str = None, credentials_file: str = None):
+        """
+        Initialize GoogleAuth with either explicit credentials or a credentials file.
+        
+        Args:
+            client_id: Google OAuth client ID
+            client_secret: Google OAuth client secret
+            redirect_uri: OAuth redirect URI
+            credentials_file: Path to credentials.json file
+        """
+        if credentials_file and os.path.exists(credentials_file):
+            credentials = self._load_credentials_from_file(credentials_file)
+            self.client_id = credentials.get('client_id')
+            self.client_secret = credentials.get('client_secret')
+            self.redirect_uri = credentials.get('redirect_uri')
+            print(f"🔍 DEBUG: GoogleAuth initialized from credentials file {credentials_file}")
+        else:
+            self.client_id = client_id
+            self.client_secret = client_secret
+            self.redirect_uri = redirect_uri
+            print(f"🔍 DEBUG: GoogleAuth initialized with client_id={client_id}")  # ✅ Debug statement
+            
+        if not self.client_id or not self.client_secret:
+            raise ValueError("Client ID and Client Secret must be provided either directly or via credentials file")
+
+    def _load_credentials_from_file(self, file_path: str) -> dict:
+        """Load OAuth credentials from a JSON file."""
+        try:
+            with open(file_path, 'r') as file:
+                credentials = json.load(file)
+            
+            # Check for required fields
+            if 'web' in credentials:
+                # Standard Google OAuth credentials.json format
+                web_config = credentials['web']
+                return {
+                    'client_id': web_config.get('client_id'),
+                    'client_secret': web_config.get('client_secret'),
+                    'redirect_uri': web_config.get('redirect_uris', [''])[0]
+                }
+            elif all(key in credentials for key in ['client_id', 'client_secret']):
+                # Simple format with direct keys
+                return credentials
+            else:
+                raise ValueError("Invalid credentials format in file")
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ ERROR: Failed to parse credentials file: {str(e)}")
+            raise ValueError(f"Invalid JSON in credentials file: {str(e)}")
+        except Exception as e:
+            print(f"❌ ERROR: Failed to load credentials file: {str(e)}")
+            raise ValueError(f"Failed to load credentials: {str(e)}")
 
     def get_authorization_url(self) -> str:
         print(f"🔍 DEBUG: Creating auth URL with client_id={self.client_id}")
@@ -180,4 +228,4 @@ class GoogleAuth:
             raise HTTPException(
                 status_code=401,
                 detail=f"Token validation failed: {str(e)}"
-            ) 
+            )

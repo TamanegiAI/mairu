@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Marketting Automation"
 authors = ["sandy1618 <sandeepnayak1.618@gmail.com>"]
 readme = "README.md"
+packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -20,6 +21,8 @@ apscheduler = "^3.11.0"
 sqlalchemy = "^2.0.40"
 alembic = "^1.15.2"
 
+[tool.poetry.scripts]
+mairu = "src.app.main:app"
 
 [build-system]
 requires = ["poetry-core"]

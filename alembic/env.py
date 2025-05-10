@@ -6,8 +6,8 @@ from sqlalchemy import pool
 from alembic import context
 
 # Add these imports
-from app.database import Base
-from app.models.database_models import Token, ColumnMapping, ScheduledEmail  # Import all models
+from src.app.database import Base
+from src.app.models.database_models import Token, ColumnMapping, ScheduledEmail  # Import all models
 import os
 from dotenv import load_dotenv
 

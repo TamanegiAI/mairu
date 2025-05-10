@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from app.config import get_settings
-from app.services.auth import GoogleAuth
-from app.models.schemas import (
+import os
+from dotenv import load_dotenv
+from src.app.config import get_settings
+from src.app.services.auth import GoogleAuth
+from src.app.models.schemas import (
     ColumnMapping,
     DocumentGeneration,
     EmailRequest,
@@ -16,16 +18,28 @@ from app.models.schemas import (
     ScheduledEmailInfo,
     CancelScheduledEmailResponse
 )
-from app.dependencies import get_google_auth
-from app.services.sheets import GoogleSheetsService
-from app.services.docs import GoogleDocsService
-from app.services.gmail import GmailService
-from app.services.scheduler import email_scheduler
+from src.app.dependencies import get_google_auth
+from src.app.services.sheets import GoogleSheetsService
+from src.app.services.docs import GoogleDocsService
+from src.app.services.gmail import GmailService
+from src.app.services.scheduler import email_scheduler
 from typing import List, Optional
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from app.database import get_db
-from app.services.database import DatabaseService
+from src.app.database import get_db
+from src.app.services.database import DatabaseService
+
+# Try to load .env from multiple locations
+env_paths = [
+    os.path.join(os.path.dirname(__file__), '.env'),  # app/.env
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')  # /.env
+]
+
+for env_path in env_paths:
+    if os.path.exists(env_path):
+        print(f"Loading environment from: {env_path}")
+        load_dotenv(env_path)
+        break
 
 app = FastAPI(title="Google Docs Automation API")
 
@@ -42,7 +56,7 @@ app.add_middleware(
 async def get_auth_url(auth: GoogleAuth = Depends(get_google_auth)):
     return {"authorization_url": auth.get_authorization_url()}
 
-@app.get("/auth/callback")
+@app.get("/oauth2callback")
 async def auth_callback(
     code: str,
     db: Session = Depends(get_db),
@@ -175,8 +189,8 @@ async def map_columns(
         tokens = DatabaseService.get_latest_tokens(db)
         if not tokens:
             raise HTTPException(
-                status_code=401,
-                detail="No access token found. Please authenticate first."
+            status_code=401,
+            detail="No access token found. Please authenticate first."
             )
             
         # Store the mapping in the database

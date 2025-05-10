@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.models import database_models
+from src.app.models import database_models
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 import os
@@ -130,4 +130,4 @@ class DatabaseService:
             scheduled_email.status = status
             db.commit()
             db.refresh(scheduled_email)
-        return scheduled_email 
+        return scheduled_email
