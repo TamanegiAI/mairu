@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "mairu"
+version = "0.1.0"
+description = "Marketting Automation"
+authors = ["sandy1618 <sandeepnayak1.618@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115.12"
+uvicorn = "^0.34.2"
+python-dotenv = "^1.1.0"
+google-auth-oauthlib = "^1.2.2"
+google-auth-httplib2 = "^0.2.0"
+google-api-python-client = "^2.169.0"
+pydantic = "^2.11.4"
+pydantic-settings = "^2.9.1"
+python-multipart = "^0.0.20"
+apscheduler = "^3.11.0"
+sqlalchemy = "^2.0.40"
+alembic = "^1.15.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
