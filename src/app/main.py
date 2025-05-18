@@ -16,13 +16,19 @@ from src.app.models.schemas import (
     EmailResponse,
     ScheduleEmailResponse,
     ScheduledEmailInfo,
-    CancelScheduledEmailResponse
+    CancelScheduledEmailResponse,
+    DriveFile,
+    InstagramPostRequest,
+    InstagramPostResponse
 )
 from src.app.dependencies import get_google_auth
 from src.app.services.sheets import GoogleSheetsService
 from src.app.services.docs import GoogleDocsService
 from src.app.services.gmail import GmailService
 from src.app.services.scheduler import email_scheduler
+from src.app.services.drive import DriveService
+from src.app.services.instagram import InstagramService
+from src.app.services.token_store import TokenStore
 from typing import List, Optional
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
@@ -66,22 +72,38 @@ async def auth_callback(
         print(f"Processing auth code: {code[:10]}...")
         
         # Check if we already have recent tokens
-        existing_tokens = DatabaseService.get_latest_tokens(db)
-        if existing_tokens and (datetime.utcnow() - existing_tokens.created_at).total_seconds() < 60:
+        existing_tokens = TokenStore.get_latest_tokens()
+        if existing_tokens and existing_tokens.get('created_at') and \
+           (datetime.fromisoformat(existing_tokens.get('created_at')) > datetime.utcnow() - timedelta(minutes=1)):
             print("Recent tokens found, returning existing access token")
-            return {"message": "Authentication successful", "access_token": existing_tokens.access_token}
+            return {"message": "Authentication successful", "access_token": existing_tokens.get('token')}
         
-        tokens = auth.get_tokens(code)
+        # Clear any existing tokens before starting a new authentication flow
+        # This helps prevent conflicts with existing token states
+        TokenStore.clear_tokens()
         
-        # Store tokens in the database
-        DatabaseService.save_tokens(
-            db,
-            access_token=tokens["token"],
-            refresh_token=tokens["refresh_token"],
-            expiry=datetime.utcnow() + timedelta(hours=1)  # Set explicit expiry
-        )
-        
-        return {"message": "Authentication successful", "access_token": tokens["token"]}
+        try:
+            tokens = auth.get_tokens(code)
+            print("✅ Authentication successful with token: " + tokens["token"][:15] + "...")
+            return {"message": "Authentication successful", "access_token": tokens["token"]}
+        except Exception as e:
+            error_str = str(e)
+            # We've already improved handling of scope changes in the get_tokens method,
+            # but let's add an additional fallback here just in case
+            if "invalid_grant" in error_str.lower():
+                print(f"Warning: {error_str}")
+                print("Invalid grant error, redirecting to new authentication flow")
+                
+                # Generate a new authorization URL for the user to try again
+                auth_url = auth.get_authorization_url()
+                return {
+                    "message": "Please try authenticating again with a fresh authorization",
+                    "retry": True,
+                    "authorization_url": auth_url
+                }
+            else:
+                raise e
+            
     except Exception as e:
         print(f"Auth callback error: {str(e)}")
         raise HTTPException(
@@ -103,9 +125,9 @@ async def list_sheets(
             access_token = authorization.replace("Bearer ", "")
             print("🔍 Using token from Authorization header")
             
-            # Get refresh token from database to enable refresh if needed
-            stored_tokens = DatabaseService.get_latest_tokens(db)
-            refresh_token = stored_tokens.refresh_token if stored_tokens else None
+            # Get refresh token from TokenStore to enable refresh if needed
+            stored_tokens = TokenStore.get_latest_tokens()
+            refresh_token = stored_tokens.get('refresh_token') if stored_tokens else None
             
             token_info = {
                 'token': access_token,
@@ -116,10 +138,10 @@ async def list_sheets(
                 'scopes': auth.SCOPES
             }
         
-        # If no Authorization header or no token_info created, use database token
+        # If no Authorization header or no token_info created, use TokenStore token
         if not token_info:
-            print("🔍 Using token from database")
-            stored_tokens = DatabaseService.get_latest_tokens(db)
+            print("🔍 Using token from TokenStore")
+            stored_tokens = TokenStore.get_latest_tokens()
             if not stored_tokens:
                 raise HTTPException(
                     status_code=401,
@@ -127,8 +149,8 @@ async def list_sheets(
                 )
             
             token_info = {
-                'token': stored_tokens.access_token,
-                'refresh_token': stored_tokens.refresh_token,
+                'token': stored_tokens.get('token'),
+                'refresh_token': stored_tokens.get('refresh_token'),
                 'token_uri': 'https://oauth2.googleapis.com/token',
                 'client_id': auth.client_id,
                 'client_secret': auth.client_secret,
@@ -140,8 +162,10 @@ async def list_sheets(
         valid_token_info = await auth.validate_and_refresh_token(token_info, db)
         
         # Use the valid token to call Google Sheets API
-        sheets_service = GoogleSheetsService(valid_token_info['token'])
+        print(f"🔍 DEBUG: Creating GoogleSheetsService with complete token info")
+        sheets_service = GoogleSheetsService(valid_token_info)
         sheets = sheets_service.list_sheets()
+        print(f"✅ DEBUG: Successfully fetched {len(sheets)} sheets")
         
         return sheets
         
@@ -162,18 +186,57 @@ async def get_columns(
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        tokens = DatabaseService.get_latest_tokens(db)
+        print(f"🔍 DEBUG: get_columns called for sheet_id={sheet_id}")
+        
+        tokens = TokenStore.get_latest_tokens()
         if not tokens:
+            print("❌ DEBUG: No tokens found in TokenStore")
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
             
-        sheets_service = GoogleSheetsService(tokens.access_token)
+        # Check auth object
+        print(f"🔍 DEBUG: Auth object client_id: {auth.client_id[:5] if auth.client_id else 'None'}")
+        
+        # Make sure we have client credentials
+        if not auth.client_id or not auth.client_secret:
+            print("❌ DEBUG: Missing client ID or client secret in auth configuration")
+            # Try to use credentials from settings as fallback
+            settings = get_settings()
+            if settings.google_client_id and settings.google_client_secret:
+                print("🔄 DEBUG: Using client credentials from settings as fallback")
+                client_id = settings.google_client_id
+                client_secret = settings.google_client_secret
+            else:
+                raise ValueError("Missing client ID or client secret in auth configuration")
+        else:
+            client_id = auth.client_id
+            client_secret = auth.client_secret
+            
+        # Create token info with all required fields
+        token_info = {
+            'token': tokens.get('token'),
+            'refresh_token': tokens.get('refresh_token'),
+            'token_uri': 'https://oauth2.googleapis.com/token',
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'scopes': auth.SCOPES
+        }
+        
+        # Validate and refresh token if needed
+        print("🔄 DEBUG: Validating and refreshing token if needed...")
+        valid_token_info = await auth.validate_and_refresh_token(token_info)
+        
+        # Use the valid token with sheets service
+        print(f"🔍 DEBUG: Creating GoogleSheetsService with complete token info")
+        sheets_service = GoogleSheetsService(valid_token_info)
         columns = sheets_service.get_columns(sheet_id)
+        print(f"✅ DEBUG: Successfully fetched {len(columns)} columns")
         return columns
         
     except Exception as e:
+        print(f"❌ ERROR in get_columns: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get columns: {str(e)}"
@@ -186,7 +249,7 @@ async def map_columns(
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        tokens = DatabaseService.get_latest_tokens(db)
+        tokens = TokenStore.get_latest_tokens()
         if not tokens:
             raise HTTPException(
             status_code=401,
@@ -219,15 +282,33 @@ async def generate_document(
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        tokens = DatabaseService.get_latest_tokens(db)
+        tokens = TokenStore.get_latest_tokens()
         if not tokens:
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
         
-        # Get the sheet data
-        sheets_service = GoogleSheetsService(tokens.access_token)
+        # Get client credentials for token refresh
+        client_id = auth.client_id
+        client_secret = auth.client_secret
+            
+        # Create complete token info with all required fields for token refresh
+        token_info = {
+            'token': tokens.get('token'),
+            'refresh_token': tokens.get('refresh_token'),
+            'token_uri': 'https://oauth2.googleapis.com/token',
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'scopes': auth.SCOPES
+        }
+        
+        # Validate and refresh token if needed
+        print("🔄 DEBUG: Validating and refreshing token if needed...")
+        valid_token_info = await auth.validate_and_refresh_token(token_info)
+        
+        # Get the sheet data with full token info for refresh capability
+        sheets_service = GoogleSheetsService(valid_token_info)
         
         # Get all data from the sheet
         sheet_data = sheets_service.get_sheet_data(request.sheet_id)
@@ -244,8 +325,8 @@ async def generate_document(
         # Create a mapping of column names to values
         data_mapping = dict(zip(headers, row_data))
         
-        # Initialize Docs service
-        docs_service = GoogleDocsService(tokens.access_token)
+        # Initialize Docs service with full token info for refresh capability
+        docs_service = GoogleDocsService(valid_token_info)
         
         # Create a new document based on the template
         template_doc = docs_service.get_document(request.template_id)
@@ -279,14 +360,32 @@ async def send_email(
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        tokens = DatabaseService.get_latest_tokens(db)
+        tokens = TokenStore.get_latest_tokens()
         if not tokens:
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
+            
+        # Get client credentials for token refresh
+        client_id = auth.client_id
+        client_secret = auth.client_secret
+            
+        # Create complete token info with all required fields for token refresh
+        token_info = {
+            'token': tokens.get('token'),
+            'refresh_token': tokens.get('refresh_token'),
+            'token_uri': 'https://oauth2.googleapis.com/token',
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'scopes': auth.SCOPES
+        }
+        
+        # Validate and refresh token if needed
+        print("🔄 DEBUG: Validating and refreshing token if needed...")
+        valid_token_info = await auth.validate_and_refresh_token(token_info)
 
-        gmail_service = GmailService(tokens.access_token)
+        gmail_service = GmailService(valid_token_info)
         result = gmail_service.send_email(
             to=request.to,
             subject=request.subject,
@@ -310,16 +409,34 @@ async def schedule_email(
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
-        tokens = DatabaseService.get_latest_tokens(db)
+        tokens = TokenStore.get_latest_tokens()
         if not tokens:
             raise HTTPException(
                 status_code=401,
                 detail="No access token found. Please authenticate first."
             )
+            
+        # Get client credentials for token refresh
+        client_id = auth.client_id
+        client_secret = auth.client_secret
+            
+        # Create complete token info with all required fields for token refresh
+        token_info = {
+            'token': tokens.get('token'),
+            'refresh_token': tokens.get('refresh_token'),
+            'token_uri': 'https://oauth2.googleapis.com/token',
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'scopes': auth.SCOPES
+        }
+        
+        # Validate and refresh token if needed
+        print("🔄 DEBUG: Validating and refreshing token if needed...")
+        valid_token_info = await auth.validate_and_refresh_token(token_info)
 
         result = email_scheduler.schedule_email(
             db=db,  # Pass db to scheduler
-            access_token=tokens.access_token,
+            access_token=valid_token_info,  # Pass full token info
             to=request.to,
             subject=request.subject,
             body=request.body,
@@ -363,4 +480,141 @@ async def refresh_token(
         raise HTTPException(
             status_code=401,
             detail=f"Token refresh failed: {str(e)}"
+        )
+
+@app.get("/drive/search", response_model=List[DriveFile])
+async def search_drive(
+    query: str,
+    file_type: str = None,
+    db: Session = Depends(get_db),
+    auth: GoogleAuth = Depends(get_google_auth)
+):
+    """Search for files in Google Drive."""
+    try:
+        print(f"🔍 DEBUG: search_drive called with query='{query}', file_type='{file_type}'")
+        
+        tokens = TokenStore.get_latest_tokens()
+        if not tokens:
+            print("❌ DEBUG: No tokens found in TokenStore")
+            raise HTTPException(
+                status_code=401,
+                detail="No access token found. Please authenticate first."
+            )
+        
+        # Get config for client credentials
+        settings = get_settings()
+        print(f"🔍 DEBUG: Got settings, client_id from settings: {settings.google_client_id[:5] if settings.google_client_id else 'None'}")
+        
+        # Check auth object
+        print(f"🔍 DEBUG: Auth object client_id: {auth.client_id[:5] if auth.client_id else 'None'}")
+        
+        # Make sure we have client credentials
+        if not auth.client_id or not auth.client_secret:
+            print("❌ DEBUG: Missing client ID or client secret in auth configuration")
+            # Try to use credentials from settings as fallback
+            if settings.google_client_id and settings.google_client_secret:
+                print("🔄 DEBUG: Using client credentials from settings as fallback")
+                client_id = settings.google_client_id
+                client_secret = settings.google_client_secret
+            else:
+                raise ValueError("Missing client ID or client secret in auth configuration")
+        else:
+            client_id = auth.client_id
+            client_secret = auth.client_secret
+            
+        # Enhance token info with client credentials required for refresh
+        complete_token_info = {
+            'token': tokens.get('token'),
+            'refresh_token': tokens.get('refresh_token'),
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'scopes': auth.SCOPES
+        }
+        
+        print(f"🔍 DEBUG: Using client_id: {client_id[:5]}... for DriveService")
+        
+        # Create a new DriveService with the complete token info
+        drive_service = DriveService(complete_token_info)
+        files = drive_service.search_files(query, file_type)
+        
+        print(f"✅ DEBUG: Found {len(files)} files matching query")
+        
+        # Transform data for response
+        return files
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to search Drive files: {str(e)}"
+        )
+
+@app.post("/instagram/generate", response_model=InstagramPostResponse)
+async def generate_instagram_posts(
+    request: InstagramPostRequest,
+    db: Session = Depends(get_db),
+    auth: GoogleAuth = Depends(get_google_auth)
+):
+    """Generate Instagram posts from spreadsheet data."""
+    try:
+        print(f"🔍 DEBUG: generate_instagram_posts called")
+        
+        tokens = TokenStore.get_latest_tokens()
+        if not tokens:
+            print("❌ DEBUG: No tokens found in TokenStore")
+            raise HTTPException(
+                status_code=401,
+                detail="No access token found. Please authenticate first."
+            )
+        
+        # Get config for client credentials
+        settings = get_settings()
+        print(f"🔍 DEBUG: Got settings, client_id from settings: {settings.google_client_id[:5] if settings.google_client_id else 'None'}")
+        
+        # Check auth object
+        print(f"🔍 DEBUG: Auth object client_id: {auth.client_id[:5] if auth.client_id else 'None'}")
+        
+        # Make sure we have client credentials
+        if not auth.client_id or not auth.client_secret:
+            print("❌ DEBUG: Missing client ID or client secret in auth configuration")
+            # Try to use credentials from settings as fallback
+            if settings.google_client_id and settings.google_client_secret:
+                print("🔄 DEBUG: Using client credentials from settings as fallback")
+                client_id = settings.google_client_id
+                client_secret = settings.google_client_secret
+            else:
+                raise ValueError("Missing client ID or client secret in auth configuration")
+        else:
+            client_id = auth.client_id
+            client_secret = auth.client_secret
+            
+        # Enhance token info with client credentials required for refresh
+        complete_token_info = {
+            'token': tokens.get('token'),
+            'refresh_token': tokens.get('refresh_token'),
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'scopes': auth.SCOPES
+        }
+        
+        # Generate Instagram posts - pass the complete token info
+        instagram_service = InstagramService(complete_token_info)
+        result = instagram_service.generate_posts(
+            spreadsheet_id=request.spreadsheet_id,
+            sheet_name=request.sheet_name,
+            slides_template_id=request.slides_template_id,
+            drive_folder_id=request.drive_folder_id,
+            recipient_email=request.recipient_email,
+            column_mappings=request.column_mappings or {},
+            process_flag_column=request.process_flag_column,
+            process_flag_value=request.process_flag_value or "yes"
+        )
+        
+        return result
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate Instagram posts: {str(e)}"
         )

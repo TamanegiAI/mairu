@@ -6,12 +6,17 @@ def get_google_auth() -> GoogleAuth:
     settings = get_settings()
     print(f"🔍 DEBUG: Creating new GoogleAuth instance")
     
-    # Check for credentials file in environment
-    credentials_file = os.environ.get('GOOGLE_CREDENTIALS_FILE')
+    # First try to use the credentials file in the app directory 
+    app_creds_path = os.path.join(os.path.dirname(__file__), 'credentials.json')
     
-    if credentials_file and os.path.exists(credentials_file):
-        print(f"🔍 DEBUG: Using credentials from file: {credentials_file}")
-        return GoogleAuth(credentials_file=credentials_file)
+    # Check for overridden credentials file in environment
+    env_creds_path = os.environ.get('GOOGLE_CREDENTIALS_FILE')
+    
+    # Try all possible credentials paths
+    for credentials_file in [env_creds_path, app_creds_path]:
+        if credentials_file and os.path.exists(credentials_file):
+            print(f"✅ DEBUG: Found credentials file: {credentials_file}")
+            return GoogleAuth(credentials_file=credentials_file)
     
     # If no credentials file, ensure we have the required settings
     if not settings.google_client_id or not settings.google_client_secret:

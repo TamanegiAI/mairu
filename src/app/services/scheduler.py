@@ -17,7 +17,7 @@ class EmailScheduler:
     def schedule_email(
         self,
         db: Session,
-        access_token: str,
+        access_token: str | dict,  # Can be a token string or a token_info dict
         to: str,
         subject: str,
         body: str,
@@ -29,6 +29,7 @@ class EmailScheduler:
         
         def send_scheduled_email(job_id: str):
             try:
+                # Pass the token or token_info to GmailService
                 gmail_service = GmailService(access_token)
                 result = gmail_service.send_email(
                     to=to,
