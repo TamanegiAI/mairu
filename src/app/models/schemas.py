@@ -65,4 +65,26 @@ class ScheduledEmailInfo(BaseModel):
 
 class CancelScheduledEmailResponse(BaseModel):
     success: bool
-    message: str 
+    message: str
+
+class DriveFile(BaseModel):
+    id: str
+    name: str
+    mimeType: str
+    webViewLink: Optional[str] = None
+
+class InstagramPostRequest(BaseModel):
+    spreadsheet_id: str
+    sheet_name: str
+    slides_template_id: str
+    drive_folder_id: str
+    recipient_email: str
+    column_mappings: Optional[Dict[str, str]] = None  # Mapping of placeholders to column names
+    process_flag_column: Optional[str] = None  # Column name to check for processing flag
+    process_flag_value: Optional[str] = "yes"  # Value that indicates to process the row
+
+class InstagramPostResponse(BaseModel):
+    success: bool
+    count: int
+    message: str
+    files: Optional[List[str]] = None

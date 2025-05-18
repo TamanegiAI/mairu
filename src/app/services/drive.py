@@ -2,8 +2,86 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from fastapi import HTTPException
+from google.auth.transport.requests import Request as GoogleRequest
 import os
 import json
+
+class DriveService:
+    """Google Drive service for file operations."""
+    
+    # MIME types for different Google file types
+    MIME_TYPES = {
+        'spreadsheet': 'application/vnd.google-apps.spreadsheet',
+        'document': 'application/vnd.google-apps.document',
+        'presentation': 'application/vnd.google-apps.presentation',
+        'folder': 'application/vnd.google-apps.folder',
+    }
+    
+    def __init__(self, access_token: str):
+        """Initialize the Drive service with an access token."""
+        try:
+            credentials = Credentials(token=access_token)
+            self.service = build('drive', 'v3', credentials=credentials)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to initialize Drive service: {str(e)}"
+            )
+    
+    def search_files(self, query: str, file_type: str = None):
+        """Search for files in Google Drive by query and optional file type."""
+        try:
+            # Format search query
+            search_query = f"name contains '{query}' and trashed=false"
+            
+            # Add file type filter if specified
+            if file_type and file_type.lower() in self.MIME_TYPES:
+                search_query += f" and mimeType='{self.MIME_TYPES[file_type.lower()]}'"
+            
+            # Execute search
+            results = self.service.files().list(
+                q=search_query,
+                spaces='drive',
+                fields="files(id, name, mimeType, webViewLink)",
+                pageSize=10
+            ).execute()
+            
+            return results.get('files', [])
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to search Drive files: {str(e)}"
+            )
+    
+    def get_file(self, file_id: str):
+        """Get detailed information about a specific file."""
+        try:
+            return self.service.files().get(
+                fileId=file_id,
+                fields="id, name, mimeType, webViewLink"
+            ).execute()
+        except Exception as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"File not found: {str(e)}"
+            )
+    
+    def list_files_in_folder(self, folder_id: str):
+        """List files in a specific folder."""
+        try:
+            query = f"'{folder_id}' in parents and trashed=false"
+            results = self.service.files().list(
+                q=query,
+                fields="files(id, name, mimeType, webViewLink)",
+                pageSize=50
+            ).execute()
+            
+            return results.get('files', [])
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to list folder contents: {str(e)}"
+            )
 
 class DriveAuth:
     """Google Drive authentication and service provider."""
@@ -13,10 +91,11 @@ class DriveAuth:
         self.credentials_file = credentials_file or os.getenv('GOOGLE_CREDENTIALS_FILE', 'credentials.json')
         self.token_file = token_file or os.getenv('GOOGLE_TOKEN_FILE', 'token.json')
         self.scopes = [
-            'https://www.googleapis.com/auth/drive.readonly',
-            'https://www.googleapis.com/auth/spreadsheets.readonly',
+            'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/documents',
-            'https://www.googleapis.com/auth/gmail.send'
+            'https://www.googleapis.com/auth/gmail.send',
+            'https://www.googleapis.com/auth/drive',
+            'https://www.googleapis.com/auth/presentations',
         ]
         self.service = None
 
@@ -32,7 +111,7 @@ class DriveAuth:
             if not creds or not creds.valid:
                 # If credentials are expired but we have a refresh token, refresh them
                 if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
+                    creds.refresh(GoogleRequest())
                 # Otherwise, run the auth flow to get new credentials    
                 else:
                     flow = InstalledAppFlow.from_client_secrets_file(

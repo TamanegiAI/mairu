@@ -4,7 +4,7 @@ from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 from fastapi import HTTPException
 from src.app.config import get_settings
-from src.app.services.database import DatabaseService
+from src.app.services.token_store import TokenStore
 import json
 import os
 from datetime import datetime, timedelta
@@ -12,10 +12,11 @@ from sqlalchemy.orm import Session
 
 class GoogleAuth:
     SCOPES = [
-        'https://www.googleapis.com/auth/spreadsheets.readonly',
+        'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/documents',
         'https://www.googleapis.com/auth/gmail.send',
-        'https://www.googleapis.com/auth/drive.readonly'
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/presentations',
     ]
 
     def __init__(self, client_id: str = None, client_secret: str = None, redirect_uri: str = None, credentials_file: str = None):
@@ -123,8 +124,47 @@ class GoogleAuth:
             scopes=self.SCOPES
         )
         flow.redirect_uri = self.redirect_uri
-        flow.fetch_token(code=code)
-        return {
+        
+        try:
+            flow.fetch_token(code=code)
+        except Exception as e:
+            error_str = str(e)
+            if "Scope has changed" in error_str:
+                print(f"Warning: {error_str}")
+                # Continue despite scope changes - the important part is we have all required scopes
+                # Google sometimes returns additional .readonly scopes or reorders the scopes list
+                required_scopes_set = set(self.SCOPES)
+                received_scopes = str(e).split("to ")[-1].strip('"').split()
+                received_scopes_set = set(received_scopes)
+                
+                # Check if all our required scopes are covered in the received scopes
+                base_scopes = {s.split('/')[-1].split('.')[0] for s in received_scopes}
+                required_base_scopes = {s.split('/')[-1].split('.')[0] for s in self.SCOPES}
+                
+                if not required_base_scopes.issubset(base_scopes):
+                    print(f"Missing required base scopes: {required_base_scopes - base_scopes}")
+                    raise e
+                
+                print("All required scopes are covered, continuing with authentication")
+                # Re-create flow with the scopes Google returned
+                flow = Flow.from_client_config(
+                    {
+                        "web": {
+                            "client_id": self.client_id,
+                            "client_secret": self.client_secret,
+                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                            "token_uri": "https://oauth2.googleapis.com/token",
+                            "redirect_uris": [self.redirect_uri],
+                        }
+                    },
+                    scopes=received_scopes
+                )
+                flow.redirect_uri = self.redirect_uri
+                flow.fetch_token(code=code)
+            else:
+                raise e
+        
+        token_info = {
             'token': flow.credentials.token,
             'refresh_token': flow.credentials.refresh_token,
             'token_uri': flow.credentials.token_uri,
@@ -132,6 +172,15 @@ class GoogleAuth:
             'client_secret': flow.credentials.client_secret,
             'scopes': flow.credentials.scopes
         }
+        
+        # Save tokens to file storage
+        TokenStore.save_tokens(
+            access_token=flow.credentials.token,
+            refresh_token=flow.credentials.refresh_token,
+            expiry=flow.credentials.expiry
+        )
+        
+        return token_info
 
     def is_token_expired(self, token_info: dict) -> bool:
         """Check if a token is expired or will expire soon (within 5 minutes)."""
@@ -158,8 +207,8 @@ class GoogleAuth:
             print(f"❌ ERROR checking token expiration: {str(e)}")
             return True
 
-    def refresh_token(self, token_info: dict, db: Session = None) -> dict:
-        """Refresh the access token and save to database if provided."""
+    def refresh_token(self, token_info: dict) -> dict:
+        """Refresh the access token and save to file storage."""
         try:
             if not token_info.get('refresh_token'):
                 raise HTTPException(
@@ -191,15 +240,13 @@ class GoogleAuth:
                 'expiry': credentials.expiry.isoformat() if credentials.expiry else None
             }
 
-            # Save to database if session provided
-            if db:
-                DatabaseService.save_tokens(
-                    db,
-                    access_token=new_token_info['token'],
-                    refresh_token=new_token_info['refresh_token'],
-                    expiry=credentials.expiry
-                )
-                print("✅ Refreshed token saved to database")
+            # Save to file storage
+            TokenStore.save_tokens(
+                access_token=new_token_info['token'],
+                refresh_token=new_token_info['refresh_token'],
+                expiry=credentials.expiry
+            )
+            print("✅ Refreshed token saved to file")
 
             return new_token_info
 
@@ -216,12 +263,39 @@ class GoogleAuth:
                 detail=f"Token refresh failed: {str(e)}"
             )
 
-    async def validate_and_refresh_token(self, token_info: dict, db: Session) -> dict:
+    async def validate_and_refresh_token(self, token_info: dict) -> dict:
         """Validate a token and refresh if necessary."""
         try:
+            # Get the stored scopes and current required scopes
+            stored_scopes = set(token_info.get('scopes', []))
+            current_scopes = set(self.SCOPES)
+            
+            # Create a helper map to check for base scope presence
+            # This handles cases where Google adds .readonly variants
+            scope_base_map = {}
+            for scope in stored_scopes:
+                base_scope = scope.split('.')[0] if '.' in scope else scope
+                scope_base_map[base_scope] = True
+            
+            # Check if all required scopes are covered (either exact or with a variant)
+            missing_scopes = []
+            for required_scope in current_scopes:
+                base_scope = required_scope.split('.')[0] if '.' in required_scope else required_scope
+                if required_scope not in stored_scopes and base_scope not in scope_base_map:
+                    missing_scopes.append(required_scope)
+            
+            if missing_scopes:
+                print(f"⚠️ Missing required scopes: {missing_scopes}")
+                # Clear tokens and require re-authentication
+                TokenStore.clear_tokens()
+                raise HTTPException(
+                    status_code=401,
+                    detail="Missing required permissions. Please re-authenticate."
+                )
+                
             if self.is_token_expired(token_info):
                 print("🔄 Token expired, attempting refresh...")
-                return self.refresh_token(token_info, db)
+                return self.refresh_token(token_info)
             return token_info
         except Exception as e:
             print(f"❌ Token validation failed: {str(e)}")

@@ -23,3 +23,6 @@ credintials.json
 .venv
 .poetry-cache/artifacts/66/31/78/fde53410ee8cfcee151a8fd46b33a872798521fe1fd21c317ee642ac36/h11-0.16.0-py3-none-any.whl
 .poetry-cache
+token.json
+src/app/credentials.json
+src/app/credentials.json

@@ -12,8 +12,23 @@ def get_auth_url() -> str:
     """Get the Google OAuth authorization URL"""
     try:
         response = requests.get(f"{API_BASE_URL}/auth/url")
+        response.raise_for_status()  # Raise exception for HTTP errors
         data = response.json()
-        return data["authorization_url"]
+        
+        # Add debugging to see what's actually in the response
+        print(f"Auth URL response: {data}")
+        
+        if "authorization_url" in data:
+            return data["authorization_url"]
+        else:
+            st.error(f"Missing authorization_url in response. Response: {data}")
+            return ""
+    except requests.exceptions.RequestException as e:
+        st.error(f"Request error: {str(e)}")
+        return ""
+    except json.JSONDecodeError as e:
+        st.error(f"Invalid JSON response: {str(e)}")
+        return ""
     except Exception as e:
         st.error(f"Failed to get authentication URL: {str(e)}")
         return ""
@@ -174,4 +189,54 @@ def cancel_scheduled_email(job_id: str, access_token: str) -> Dict[str, Any]:
         return response.json()
     except Exception as e:
         st.error(f"Error canceling email: {str(e)}")
+        return {"success": False, "message": str(e)}
+
+def search_drive_files(query: str, file_type: str, access_token: str) -> List[Dict[str, Any]]:
+    """Search for files in Google Drive by query and type"""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/drive/search",
+            params={"query": query, "file_type": file_type},
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Failed to search files: {response.text}")
+            return []
+    except Exception as e:
+        st.error(f"Error searching files: {str(e)}")
+        return []
+
+def generate_instagram_post(
+    spreadsheet_id: str, 
+    sheet_name: str,
+    slides_template_id: str,
+    drive_folder_id: str,
+    recipient_email: str,
+    access_token: str
+) -> Dict[str, Any]:
+    """Generate Instagram posts from spreadsheet data"""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/instagram/generate",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "spreadsheet_id": spreadsheet_id,
+                "sheet_name": sheet_name,
+                "slides_template_id": slides_template_id,
+                "drive_folder_id": drive_folder_id,
+                "recipient_email": recipient_email
+            }
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Failed to generate posts: {response.text}")
+            return {"success": False, "message": response.text}
+    except Exception as e:
+        st.error(f"Error generating posts: {str(e)}")
         return {"success": False, "message": str(e)}
