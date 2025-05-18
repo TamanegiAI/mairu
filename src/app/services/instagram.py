@@ -15,16 +15,62 @@ from googleapiclient.http import MediaIoBaseUpload
 class InstagramService:
     """Service for generating Instagram posts from Google Sheets data using Slides templates."""
     
-    def __init__(self, access_token: str):
-        """Initialize services with an access token."""
+    def __init__(self, token_info_or_token):
+        """Initialize services with an access token or token info dictionary."""
         try:
-            credentials = Credentials(token=access_token)
+            # Handle both string token and token info dictionary
+            if isinstance(token_info_or_token, str):
+                # Just a token string was passed
+                token = token_info_or_token
+                credentials = Credentials(token=token)
+                # Store the token for later use with export requests
+                self.access_token = token
+            else:
+                # A token info dictionary was passed
+                token_info = token_info_or_token
+                token = token_info.get('token')
+                
+                if not token:
+                    raise ValueError("Access token is required")
+                
+                # Extract credential components
+                client_id = token_info.get('client_id')
+                client_secret = token_info.get('client_secret')
+                refresh_token = token_info.get('refresh_token')
+                
+                # Check if we have enough information for refresh capabilities
+                if client_id and client_secret and refresh_token:
+                    # Create credentials with full refresh capabilities
+                    credentials = Credentials(
+                        token=token,
+                        refresh_token=refresh_token,
+                        token_uri='https://oauth2.googleapis.com/token',
+                        client_id=client_id,
+                        client_secret=client_secret,
+                        scopes=token_info.get('scopes', ['https://www.googleapis.com/auth/drive'])
+                    )
+                    print(f"Debug: Created credentials with client_id: {client_id[:5]}...")
+                else:
+                    # Create simple credentials without refresh capability
+                    credentials = Credentials(token=token)
+                    print("Debug: Created simple credentials without refresh capability")
+                
+                # Store the token for later use with export requests
+                self.access_token = token
+            
+            # Setup request for possible token refresh if we have refresh capabilities
+            if hasattr(credentials, 'refresh_token') and credentials.refresh_token:
+                from google.auth.transport.requests import Request
+                request = Request()
+                if credentials.expired:
+                    credentials.refresh(request)
+            
+            # Initialize the services
             self.sheets_service = build('sheets', 'v4', credentials=credentials)
             self.slides_service = build('slides', 'v1', credentials=credentials)
             self.drive_service = build('drive', 'v3', credentials=credentials)
             self.gmail_service = build('gmail', 'v1', credentials=credentials)
-            # Store the token for later use with export requests
-            self.access_token = access_token
+            
         except Exception as e:
             print(f"Error initializing Google services: {str(e)}")
             raise HTTPException(

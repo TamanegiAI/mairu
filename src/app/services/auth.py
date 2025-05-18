@@ -47,6 +47,7 @@ class GoogleAuth:
     def _load_credentials_from_file(self, file_path: str) -> dict:
         """Load OAuth credentials from a JSON file."""
         try:
+            print(f"🔍 DEBUG: Loading credentials from {file_path}")
             with open(file_path, 'r') as file:
                 credentials = json.load(file)
             
@@ -54,10 +55,17 @@ class GoogleAuth:
             if 'web' in credentials:
                 # Standard Google OAuth credentials.json format
                 web_config = credentials['web']
+                client_id = web_config.get('client_id')
+                client_secret = web_config.get('client_secret')
+                redirect_uri = web_config.get('redirect_uris', [''])[0]
+                
+                print(f"✅ DEBUG: Loaded client_id={client_id[:8]}... from credentials file")
+                print(f"✅ DEBUG: Loaded redirect_uri={redirect_uri} from credentials file")
+                
                 return {
-                    'client_id': web_config.get('client_id'),
-                    'client_secret': web_config.get('client_secret'),
-                    'redirect_uri': web_config.get('redirect_uris', [''])[0]
+                    'client_id': client_id,
+                    'client_secret': client_secret,
+                    'redirect_uri': redirect_uri
                 }
             elif all(key in credentials for key in ['client_id', 'client_secret']):
                 # Simple format with direct keys

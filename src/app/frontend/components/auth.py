@@ -50,9 +50,19 @@ def display_auth_status():
     auth_col1, auth_col2 = st.columns([3, 1])
     with auth_col1:
         if st.session_state.is_authenticated:
-            st.success("Authenticated")
+            st.success("✅ Authenticated with Google")
+            # Show token expiry if available
+            from src.app.services.token_store import TokenStore
+            tokens = TokenStore.get_latest_tokens()
+            if tokens and tokens.get('expiry'):
+                st.info(f"Token valid until: {tokens.get('expiry')}")
         else:
-            st.warning("Not authenticated")
+            st.warning("⚠️ Not authenticated - Please sign in with Google")
+            # Check if token.json exists but was not loaded
+            import os
+            from src.app.services.token_store import TOKEN_FILE
+            if os.path.exists(TOKEN_FILE):
+                st.info("A token file exists but could not be loaded. You may need to re-authenticate.")
     
     with auth_col2:
         if st.session_state.is_authenticated:

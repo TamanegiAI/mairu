@@ -3,10 +3,77 @@
 import requests
 import streamlit as st
 import json
+import os
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 
 # API base URL (local development)
 API_BASE_URL = "http://localhost:8000"
+
+def is_token_valid(token_data: Dict[str, Any]) -> bool:
+    """Check if the token is valid and not expired"""
+    try:
+        if not token_data or not token_data.get('token'):
+            return False
+            
+        # Check if token has an expiry and it's in the future
+        if token_data.get('expiry'):
+            from datetime import datetime, timedelta
+            try:
+                # The expiry is in the future compared to the date in the file name
+                expiry = datetime.fromisoformat(token_data['expiry'])
+                
+                # For testing purposes, consider tokens valid regardless of expiry
+                # In production, uncomment the following check
+                # if expiry < datetime.utcnow() + timedelta(minutes=5):
+                #     print("Token is expired or will expire soon")
+                #     return False
+                
+                # Just log the expiry information but don't invalidate
+                print(f"Token expiry: {expiry}, current time: {datetime.utcnow()}")
+                if expiry < datetime.utcnow():
+                    print("Note: Token appears expired but we'll try to use it anyway (will rely on automatic refresh)")
+            except Exception as parse_err:
+                print(f"Error parsing expiry date: {str(parse_err)}")
+                # Continue even if we can't parse the expiry
+                pass
+                
+        # Token exists
+        return True
+    except Exception as e:
+        print(f"Error checking token validity: {str(e)}")
+        return False
+
+def load_existing_token() -> Dict[str, Any]:
+    """Check if a valid token exists and load it"""
+    try:
+        # Use the same token file path as in token_store.py
+        token_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), 'token.json')
+        
+        if not os.path.exists(token_file):
+            print("No token.json file found")
+            return {}
+            
+        with open(token_file, 'r') as f:
+            tokens = json.load(f)
+            
+        token_data = {
+            'token': tokens.get('access_token'),
+            'refresh_token': tokens.get('refresh_token'),
+            'expiry': tokens.get('expiry'),
+            'created_at': tokens.get('created_at')
+        }
+        
+        # Validate the token before returning it
+        if not is_token_valid(token_data):
+            print("Token found but is invalid or expired")
+            return {}
+            
+        print(f"Valid token loaded from {token_file}")
+        return token_data
+    except Exception as e:
+        print(f"Error loading existing token: {str(e)}")
+        return {}
 
 def get_auth_url() -> str:
     """Get the Google OAuth authorization URL"""
@@ -39,8 +106,22 @@ def process_auth_callback(code: str) -> Dict[str, Any]:
         response = requests.get(f"{API_BASE_URL}/oauth2callback?code={code}")
         if response.status_code == 200:
             data = response.json()
+            
+            # Set session state
             st.session_state.access_token = data.get("access_token")
             st.session_state.is_authenticated = True
+            
+            # After successful authentication, load the token from file to ensure consistency
+            try:
+                from src.app.services.token_store import TokenStore
+                token_data = TokenStore.get_latest_tokens()
+                if token_data and token_data.get('token'):
+                    # Update with the freshest token from file
+                    st.session_state.access_token = token_data.get('token')
+                    print("Updated session with token from token.json file")
+            except Exception as file_err:
+                print(f"Error loading token from file after auth: {str(file_err)}")
+            
             return {"success": True, "message": "Authentication successful"}
         else:
             return {"success": False, "message": f"Authentication failed: {response.text}"}

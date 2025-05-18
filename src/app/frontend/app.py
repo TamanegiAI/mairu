@@ -7,6 +7,7 @@ from src.app.frontend.components.auth import authenticate, logout, display_auth_
 from src.app.frontend.components.sheets import display_sheet_selection, display_template_selection, display_mapping_ui
 from src.app.frontend.components.document_generation import display_generation_tab
 from src.app.frontend.components.email_scheduling import display_email_config, display_send_schedule
+from src.app.frontend.utils.api_helper import load_existing_token
 
 # Try importing the image automation component if it exists
 try:
@@ -22,11 +23,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# State management
+# Load existing tokens if available
+existing_token = load_existing_token()
+has_valid_token = bool(existing_token and existing_token.get('token'))
+print(f"Existing token found: {has_valid_token}")
+
+# State management 
 if 'is_authenticated' not in st.session_state:
-    st.session_state.is_authenticated = False
+    st.session_state.is_authenticated = has_valid_token
 if 'access_token' not in st.session_state:
-    st.session_state.access_token = None
+    st.session_state.access_token = existing_token.get('token') if has_valid_token else None
 if 'sheets' not in st.session_state:
     st.session_state.sheets = []
 if 'columns' not in st.session_state:
@@ -58,7 +64,15 @@ def main():
         st.button("Mail Automation", on_click=show_mail_automation, 
                  use_container_width=True,
                  type="primary" if st.session_state.current_section == "mail" else "secondary")
-
+        
+        # Debug info in sidebar expandable section
+        with st.expander("Debug Info"):
+            st.write(f"Authentication state: {st.session_state.is_authenticated}")
+            if st.session_state.access_token:
+                st.write(f"Token available: {'Yes' if st.session_state.access_token else 'No'}")
+                st.write(f"Token length: {len(st.session_state.access_token)}")
+            else:
+                st.write("No access token in session")
         
         st.divider()
         st.caption("© 2025 Google Docs Automation")
