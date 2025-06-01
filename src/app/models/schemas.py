@@ -88,3 +88,26 @@ class InstagramPostResponse(BaseModel):
     count: int
     message: str
     files: Optional[List[str]] = None
+
+
+class MonitoringConfigRequest(BaseModel):
+    enabled: bool
+    trigger_folder_id: str
+    backup_folder_id: str
+    spreadsheet_id: str
+    status_column: str # Name of the column in the spreadsheet for status updates
+    monitoring_frequency_minutes: int
+
+class MonitoringConfigResponse(BaseModel):
+    success: bool
+    message: str
+    job_id: Optional[str] = None # ID of the scheduled job if enabled
+
+class MonitoringStatusResponse(BaseModel):
+    is_monitoring_active: bool
+    status_message: str
+    last_check_timestamp: Optional[datetime] = None
+    last_processed_image_name: Optional[str] = None
+    last_processed_image_status: Optional[str] = None # e.g., "Detected", "Processing", "Sent", "Failed"
+    last_processed_timestamp: Optional[datetime] = None
+    error_message: Optional[str] = None

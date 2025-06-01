@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime
 import time
 import json
-from src.app.frontend.utils.api_helper import API_BASE_URL, search_drive_files, generate_instagram_post
+from src.app.frontend.utils.api_helper import API_BASE_URL, search_drive_files, generate_instagram_post, configure_folder_monitoring, get_folder_monitoring_status
 import requests
 
 def display_file_picker(file_type, access_token):
@@ -97,6 +97,34 @@ def display_image_automation():
     if not access_token:
         st.warning("Authentication required. Please sign in first.")
         return
+
+    # Initialize session state for folder monitoring if not already present
+    if 'monitoring_trigger_folder_id' not in st.session_state:
+        st.session_state.monitoring_trigger_folder_id = None
+    if 'monitoring_trigger_folder_name' not in st.session_state:
+        st.session_state.monitoring_trigger_folder_name = ""
+    if 'monitoring_backup_folder_id' not in st.session_state:
+        st.session_state.monitoring_backup_folder_id = None
+    if 'monitoring_backup_folder_name' not in st.session_state:
+        st.session_state.monitoring_backup_folder_name = ""
+    if 'monitoring_enabled' not in st.session_state:
+        st.session_state.monitoring_enabled = False
+    if 'monitoring_frequency' not in st.session_state:
+        st.session_state.monitoring_frequency = 15 # Default to 15 minutes
+    if 'monitoring_status_column' not in st.session_state:
+        st.session_state.monitoring_status_column = ""
+    if 'monitoring_active_status' not in st.session_state:
+        st.session_state.monitoring_active_status = "Unknown"
+    if 'monitoring_last_processed_image' not in st.session_state:
+        st.session_state.monitoring_last_processed_image = "N/A"
+    if 'monitoring_last_check_time' not in st.session_state:
+        st.session_state.monitoring_last_check_time = "N/A"
+    if 'monitoring_error_message' not in st.session_state:
+        st.session_state.monitoring_error_message = ""
+    if 'monitoring_status_sheet_columns' not in st.session_state:
+        st.session_state.monitoring_status_sheet_columns = []
+    if 'folder_workflow_status_loaded' not in st.session_state:
+        st.session_state.folder_workflow_status_loaded = False
     
     # File picker section
     st.subheader("1. Select Files")
@@ -248,6 +276,163 @@ def display_image_automation():
                     except Exception as e:
                         st.error(f"Error connecting to API: {str(e)}")
     
+    # --- Folder Workflow Callbacks ---
+    def update_monitoring_status_display():
+        if st.session_state.get("access_token"):
+            status_data = get_folder_monitoring_status(st.session_state.access_token)
+            if status_data:
+                st.session_state.monitoring_active_status = "Active" if status_data.get('is_monitoring_active') else "Inactive"
+                st.session_state.monitoring_last_processed_image = status_data.get('last_processed_image_name', 'N/A')
+                st.session_state.monitoring_last_check_time = status_data.get('last_check_time', 'N/A')
+                st.session_state.monitoring_error_message = status_data.get('error_message', '')
+                
+                current_config = status_data.get('current_config')
+                if current_config: # Pre-fill config from status if available
+                    st.session_state.monitoring_enabled = current_config.get('monitoring_enabled', st.session_state.monitoring_enabled)
+                    st.session_state.monitoring_frequency = current_config.get('monitoring_frequency_minutes', st.session_state.monitoring_frequency)
+                    st.session_state.monitoring_status_column = current_config.get('status_column_name', st.session_state.monitoring_status_column)
+                    # We could also pre-fill folder names/IDs if we store them more robustly from display_file_picker
+            else:
+                st.session_state.monitoring_active_status = "Error fetching status"
+                st.session_state.monitoring_error_message = "Failed to connect to backend or parse status."
+        st.session_state.folder_workflow_status_loaded = True # Mark as loaded
+
+    def handle_save_monitoring_config():
+        if not st.session_state.get("access_token"):
+            st.error("Authentication token not found. Please re-authenticate.")
+            return
+
+        if not st.session_state.monitoring_trigger_folder_id or not st.session_state.monitoring_backup_folder_id:
+            st.error("Please select both Trigger and Backup folders.")
+            return
+        
+        # spreadsheet_id should be available from section 1
+        current_spreadsheet_id = None
+        if st.session_state.get('selected_spreadsheet') and st.session_state.selected_spreadsheet.get('id'):
+            current_spreadsheet_id = st.session_state.selected_spreadsheet.get('id')
+        elif spreadsheet_id: # Fallback to the variable if display_file_picker sets it directly
+             current_spreadsheet_id = spreadsheet_id
+
+        if not current_spreadsheet_id:
+            st.error("Spreadsheet ID not found. Please select a spreadsheet in Section 1.")
+            return
+
+        if st.session_state.monitoring_enabled and not st.session_state.monitoring_status_column:
+            st.warning("It's recommended to select a Status Column when monitoring is enabled.")
+
+        config_data = {
+            "trigger_folder_id": st.session_state.monitoring_trigger_folder_id,
+            "backup_folder_id": st.session_state.monitoring_backup_folder_id,
+            "monitoring_enabled": st.session_state.monitoring_enabled,
+            "monitoring_frequency_minutes": st.session_state.monitoring_frequency,
+            "status_column_name": st.session_state.monitoring_status_column,
+            "spreadsheet_id": current_spreadsheet_id
+        }
+        
+        response = configure_folder_monitoring(config_data, st.session_state.access_token)
+        if response and response.get("success"):
+            st.success(response.get("message", "Monitoring configuration saved successfully!"))
+            update_monitoring_status_display() # Refresh status after saving
+        else:
+            error_msg = response.get("message", "Failed to save monitoring configuration.")
+            detail = response.get("error_detail", response.get("detail")) # Check for 'detail' too
+            if detail and isinstance(detail, str): error_msg += f" Details: {detail}"
+            elif detail: error_msg += f" Details: {json.dumps(detail)}"
+            st.error(error_msg)
+
+    # Section 5: Folder Workflow
+    st.subheader("5. Folder Workflow")
+    if not st.session_state.folder_workflow_status_loaded and access_token:
+        update_monitoring_status_display() # Initial load of status
+    
+    with st.container():
+        st.markdown("#### 1. Folder Selection")
+
+        # Image Trigger Folder selector
+        selected_trigger_folder_id = display_file_picker("Image Trigger Folder", access_token)
+        if selected_trigger_folder_id:
+            st.session_state.monitoring_trigger_folder_id = selected_trigger_folder_id
+            trigger_folder_details_key = "selected_image_trigger_folder" # Key used by display_file_picker
+            folder_details = st.session_state.get(trigger_folder_details_key)
+            if folder_details and folder_details.get('id') == selected_trigger_folder_id:
+                st.session_state.monitoring_trigger_folder_name = folder_details.get('name', selected_trigger_folder_id)
+            else:
+                st.session_state.monitoring_trigger_folder_name = selected_trigger_folder_id # Fallback to ID
+        elif st.session_state.monitoring_trigger_folder_id: # If already set, display its name
+            st.text(f"Selected Trigger Folder: {st.session_state.get('monitoring_trigger_folder_name', st.session_state.monitoring_trigger_folder_id)}")
+
+        # Image Backup/Done Folder selector
+        selected_backup_folder_id = display_file_picker("Image Backup/Done Folder", access_token)
+        if selected_backup_folder_id:
+            st.session_state.monitoring_backup_folder_id = selected_backup_folder_id
+            backup_folder_details_key = "selected_image_backup_done_folder" # Key used by display_file_picker
+            folder_details = st.session_state.get(backup_folder_details_key)
+            if folder_details and folder_details.get('id') == selected_backup_folder_id:
+                st.session_state.monitoring_backup_folder_name = folder_details.get('name', selected_backup_folder_id)
+            else:
+                st.session_state.monitoring_backup_folder_name = selected_backup_folder_id # Fallback to ID
+        elif st.session_state.monitoring_backup_folder_id: # If already set, display its name
+            st.text(f"Selected Backup Folder: {st.session_state.get('monitoring_backup_folder_name', st.session_state.monitoring_backup_folder_id)}")
+
+        st.markdown("---") # Visual separator
+        st.markdown("#### 2. Monitoring Configuration")
+
+        st.markdown("**Monitoring Configuration**")
+        st.session_state.monitoring_enabled = st.toggle("Enable Automatic Monitoring", value=st.session_state.monitoring_enabled, key='monitoring_toggle')
+        st.session_state.monitoring_frequency = st.number_input("Monitoring Frequency (minutes)", min_value=1, value=st.session_state.monitoring_frequency, key='monitoring_freq_input')
+        
+        if spreadsheet_id: # Ensure spreadsheet_id is selected from section 1
+            # Populate sheet_columns for status dropdown if not already populated or if spreadsheet_id changed
+            if not st.session_state.monitoring_status_sheet_columns or st.session_state.get('current_spreadsheet_id_for_status_col') != spreadsheet_id:
+                st.session_state.monitoring_status_sheet_columns = get_sheet_columns(spreadsheet_id, access_token)
+                st.session_state.current_spreadsheet_id_for_status_col = spreadsheet_id
+
+            status_column_options = ["None"] + st.session_state.monitoring_status_sheet_columns
+            
+            # Try to find current index for selected_status_column
+            current_status_col_index = 0
+            if st.session_state.monitoring_status_column and st.session_state.monitoring_status_column in status_column_options:
+                current_status_col_index = status_column_options.index(st.session_state.monitoring_status_column)
+
+            selected_status_col_from_ui = st.selectbox(
+                "Status Column (in Spreadsheet from section 1 to update)",
+                status_column_options,
+                index=current_status_col_index,
+                key="monitoring_status_column_selector"
+            )
+            st.session_state.monitoring_status_column = selected_status_col_from_ui if selected_status_col_from_ui != "None" else ""
+        else:
+            st.info("Select a Spreadsheet in section 1 to choose a Status Column for monitoring.")
+        
+        st.button("Save Monitoring Configuration", on_click=handle_save_monitoring_config, key='save_monitoring_config_button')
+        # Corrected indentation for the following lines
+        # This 'else' block for spreadsheet_id check was problematic, removing it as the st.info above covers it.
+        # else:
+        #     st.info("Select a spreadsheet in '1. Select Files' to choose a status column for monitoring.")
+        #     # Reset status column if spreadsheet is not selected
+        #     st.session_state.monitoring_status_column = "" # Use the correct session state var
+
+        st.markdown("---") # Visual separator
+        st.markdown("#### 3. Status Information")
+
+        # Initialize session states for status info if they don't exist
+        if 'monitoring_status_display' not in st.session_state:
+            st.session_state.monitoring_status_display = "Monitoring: Inactive"
+        if 'last_processed_image_info' not in st.session_state:
+            st.session_state.last_processed_image_info = "Last Processed: N/A"
+
+        # Display current monitoring status
+        st.button("Refresh Monitoring Status", on_click=update_monitoring_status_display, key='refresh_monitoring_status_button')
+        st.text(f"Current Monitoring Status: {st.session_state.monitoring_active_status}")
+        st.text(f"Last Processed Image: {st.session_state.monitoring_last_processed_image}")
+        st.text(f"Last Checked: {st.session_state.monitoring_last_check_time}")
+        if st.session_state.monitoring_error_message:
+            st.error(f"Last Error: {st.session_state.monitoring_error_message}")
+        
+        # Placeholder for a button to manually trigger a check, if desired in future
+        # if st.button("Check Trigger Folder Now"):
+        #    st.info("Manual check triggered (feature to be implemented).")
+
     # Implementation details expander
     with st.expander("How it works"):
         st.markdown("""
