@@ -16,6 +16,7 @@ class GoogleAuth:
         'https://www.googleapis.com/auth/documents',
         'https://www.googleapis.com/auth/gmail.send',
         'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/drive.readonly',  # Explicitly added for Google compatibility
         'https://www.googleapis.com/auth/presentations',
     ]
 
@@ -139,21 +140,36 @@ class GoogleAuth:
             error_str = str(e)
             if "Scope has changed" in error_str:
                 print(f"Warning: {error_str}")
-                # Continue despite scope changes - the important part is we have all required scopes
-                # Google sometimes returns additional .readonly scopes or reorders the scopes list
-                required_scopes_set = set(self.SCOPES)
+                
+                # Extract the new scopes from the error message
                 received_scopes = str(e).split("to ")[-1].strip('"').split()
                 received_scopes_set = set(received_scopes)
                 
-                # Check if all our required scopes are covered in the received scopes
-                base_scopes = {s.split('/')[-1].split('.')[0] for s in received_scopes}
-                required_base_scopes = {s.split('/')[-1].split('.')[0] for s in self.SCOPES}
+                # Define our required scopes (excluding drive.readonly for comparison)
+                required_scopes = {
+                    'https://www.googleapis.com/auth/spreadsheets',
+                    'https://www.googleapis.com/auth/documents',
+                    'https://www.googleapis.com/auth/gmail.send',
+                    'https://www.googleapis.com/auth/drive',  # We only need full drive access
+                    'https://www.googleapis.com/auth/presentations',
+                }
                 
-                if not required_base_scopes.issubset(base_scopes):
-                    print(f"Missing required base scopes: {required_base_scopes - base_scopes}")
-                    raise e
+                # Check if all our required scopes are in the received scopes
+                missing_scopes = required_scopes - received_scopes_set
                 
-                print("All required scopes are covered, continuing with authentication")
+                # Special case: if we have full drive access, we don't need drive.readonly
+                if 'https://www.googleapis.com/auth/drive' in received_scopes_set:
+                    received_scopes_set.discard('https://www.googleapis.com/auth/drive.readonly')
+                
+                if missing_scopes:
+                    print(f"❌ ERROR: Missing required scopes: {missing_scopes}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Missing required scopes: {', '.join(missing_scopes)}"
+                    )
+                
+                print("✅ All required scopes are covered, continuing with authentication")
+                
                 # Re-create flow with the scopes Google returned
                 flow = Flow.from_client_config(
                     {
@@ -165,7 +181,7 @@ class GoogleAuth:
                             "redirect_uris": [self.redirect_uri],
                         }
                     },
-                    scopes=received_scopes
+                    scopes=received_scopes  # Use the scopes Google returned
                 )
                 flow.redirect_uri = self.redirect_uri
                 flow.fetch_token(code=code)
