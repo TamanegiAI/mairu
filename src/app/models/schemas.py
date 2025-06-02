@@ -95,8 +95,16 @@ class MonitoringConfigRequest(BaseModel):
     trigger_folder_id: str
     backup_folder_id: str
     spreadsheet_id: str
-    status_column: str # Name of the column in the spreadsheet for status updates
     monitoring_frequency_minutes: int
+    status_column_name: Optional[str] = None # Name of the column in the spreadsheet for status updates
+    
+    # New fields for Instagram post generation specifics
+    sheet_name: str
+    slides_template_id: str
+    recipient_email: str
+    column_mappings: Optional[Dict[str, str]] = None  # Mapping of placeholders to column names
+    process_flag_column: Optional[str] = None  # Column name to check for processing flag
+    process_flag_value: Optional[str] = "yes"  # Value that indicates to process the row
 
 class MonitoringConfigResponse(BaseModel):
     success: bool
@@ -111,3 +119,4 @@ class MonitoringStatusResponse(BaseModel):
     last_processed_image_status: Optional[str] = None # e.g., "Detected", "Processing", "Sent", "Failed"
     last_processed_timestamp: Optional[datetime] = None
     error_message: Optional[str] = None
+    current_config: Optional[MonitoringConfigRequest] = None # To send back current config with status

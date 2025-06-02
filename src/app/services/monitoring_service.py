@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any
 from src.app.models.schemas import MonitoringConfigRequest
 from src.app.services.drive import DriveService
 from src.app.services.auth import GoogleAuth # For type hinting, actual auth passed during methods
+from src.app.services.instagram import InstagramService
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -125,39 +126,68 @@ class FolderMonitoringService:
             self.last_processed_image_status = "Detected"
             self.last_processed_timestamp = datetime.utcnow()
 
-            # ---- Future Steps (to be implemented in subsequent phases) ----
-            # 1. Update status in spreadsheet to "Processing"
-            #    - Need GoogleSheetsService and spreadsheet_id, status_column from config
-            #    - sheets_service.update_cell(spreadsheet_id, sheet_name_from_config_or_default, row_for_image, status_column_index, "Processing")
-            
-            # 2. Download the image content from Google Drive
-            #    - image_content = drive_service.get_file_content(image_file['id'])
-            
-            # 3. Use existing text column mappings ({{TEXT}} etc.) from the spreadsheet
-            #    - This implies finding a corresponding row in the spreadsheet for this image, or using a default/next available row.
-            #    - This part of the workflow needs more definition: how is an image linked to a spreadsheet row?
-            #    - For now, let's assume we find a row marked 'Yet to send' in the status_column.
-            
-            # 4. Generate a post using the selected slide template:
-            #    - slides_service = GoogleSlidesService(auth_service.get_credentials())
-            #    - slides_service.generate_post_from_template_with_image_replacement(...)
-            #    - Export as PNG
-            
-            # 5. Send email with the generated post
-            #    - gmail_service = GmailService(auth_service.get_credentials())
-            #    - gmail_service.send_email_with_attachment(...)
-            
-            # 6. Update status to "Sent" (success) or "Failed" (error)
-            #    - sheets_service.update_cell(..., "Sent" or "Failed")
-            
-            # 7. If successful, move the processed image to the Backup Folder
-            #    - drive_service.move_file(image_file['id'], self.current_config.backup_folder_id)
-            #    logger.info(f"Moved {image_file['name']} to backup folder: {self.current_config.backup_folder_id}")
-            #    self.last_processed_image_status = "Processed and Moved"
-            # else (if failed):
-            #    self.last_processed_image_status = "Failed"
-            #    logger.error(f"Processing failed for {image_file['name']}.")
-            # ---- End of Future Steps ----
+            # Instantiate InstagramService
+            try:
+                instagram_service = InstagramService(token_info_or_token=self.current_auth_details)
+            except Exception as e:
+                logger.error(f"Failed to instantiate InstagramService: {e}")
+                self.error_message = f"Error instantiating InstagramService: {e}"
+                self.last_processed_image_status = "Error (InstagramService Init)"
+                return
+
+            # Prepare arguments for generate_posts
+            # TODO: These placeholder values need to be made configurable in MonitoringConfigRequest
+            # and through the frontend UI and backend API.
+            config_sheet_name = getattr(self.current_config, 'sheet_name', 'Sheet1') # Placeholder
+            config_slides_template_id = getattr(self.current_config, 'slides_template_id', 'DEFAULT_SLIDE_TEMPLATE_ID') # Placeholder
+            config_recipient_email = getattr(self.current_config, 'recipient_email', 'user@example.com') # Placeholder
+            config_column_mappings = getattr(self.current_config, 'column_mappings', None) # Placeholder
+            config_process_flag_column = getattr(self.current_config, 'process_flag_column', None) # Placeholder
+            config_process_flag_value = getattr(self.current_config, 'process_flag_value', 'yes') # Placeholder
+
+            logger.info(f"Attempting to generate post for image: {image_file['name']}")
+            try:
+                post_generation_result = instagram_service.generate_posts(
+                    spreadsheet_id=self.current_config.spreadsheet_id,
+                    sheet_name=config_sheet_name, 
+                    slides_template_id=config_slides_template_id,
+                    drive_folder_id=None, # Output folder for generate_posts, may not be needed if image_url is direct
+                    recipient_email=config_recipient_email,
+                    column_mappings=config_column_mappings,
+                    process_flag_column=config_process_flag_column,
+                    process_flag_value=config_process_flag_value,
+                    image_url=image_file['id'], # Pass Drive file ID as image_url
+                    update_status_column=self.current_config.status_column_name
+                )
+
+                if post_generation_result and post_generation_result.get("success"):
+                    logger.info(f"Successfully generated post for {image_file['name']}. Result: {post_generation_result.get('message')}")
+                    self.last_processed_image_status = "Processed and Emailed"
+                    
+                    # Move to backup folder if backup_folder_id is configured
+                    if self.current_config.backup_folder_id:
+                        logger.info(f"Moving {image_file['name']} to backup folder {self.current_config.backup_folder_id}")
+                        try:
+                            drive_service.move_file(file_id=image_file['id'], new_parent_id=self.current_config.backup_folder_id)
+                            logger.info(f"Successfully moved {image_file['name']} to backup folder.")
+                            self.last_processed_image_status = "Processed and Moved"
+                        except Exception as move_error:
+                            logger.error(f"Failed to move {image_file['name']} to backup folder: {move_error}")
+                            self.error_message = f"Post generated, but failed to move file: {move_error}"
+                            self.last_processed_image_status = "Processing OK, Move Failed"
+                    else:
+                        logger.warning(f"No backup folder configured. File {image_file['name']} will not be moved.")
+                        self.last_processed_image_status = "Processed (No Backup Folder)"
+                else:
+                    error_detail = post_generation_result.get('message', 'Unknown error during post generation.')
+                    logger.error(f"Failed to generate post for {image_file['name']}: {error_detail}")
+                    self.error_message = f"Post generation failed: {error_detail}"
+                    self.last_processed_image_status = "Processing Failed"
+
+            except Exception as e:
+                logger.error(f"Exception during post generation for {image_file['name']}: {e}")
+                self.error_message = f"Exception during post generation: {e}"
+                self.last_processed_image_status = "Processing Exception"
 
         except Exception as e:
             logger.error(f"Error checking trigger folder: {e}")
