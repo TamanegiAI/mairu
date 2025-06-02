@@ -564,8 +564,26 @@ def display_image_automation():
         if selected_trigger_folder_id:
             st.session_state.monitoring_trigger_folder_id = selected_trigger_folder_id
             trigger_folder_details_key = "selected_image_trigger_folder" # Key used by display_file_picker
-
-
+            folder_details = st.session_state.get(trigger_folder_details_key)
+            if folder_details and folder_details.get('id') == selected_trigger_folder_id:
+                st.session_state.monitoring_trigger_folder_name = folder_details.get('name', selected_trigger_folder_id)
+            else:
+                st.session_state.monitoring_trigger_folder_name = selected_trigger_folder_id # Fallback to ID
+        elif st.session_state.get('monitoring_trigger_folder_id'): # If already set, display its name
+            st.text(f"Selected Trigger Folder: {st.session_state.get('monitoring_trigger_folder_name', st.session_state.monitoring_trigger_folder_id)}")
+        
+        # Image Backup Folder selector
+        selected_backup_folder_id = display_file_picker("Image Backup Folder", access_token)
+        if selected_backup_folder_id:
+            st.session_state.monitoring_backup_folder_id = selected_backup_folder_id
+            backup_folder_details_key = "selected_image_backup_folder" # Key used by display_file_picker
+            folder_details = st.session_state.get(backup_folder_details_key)
+            if folder_details and folder_details.get('id') == selected_backup_folder_id:
+                st.session_state.monitoring_backup_folder_name = folder_details.get('name', selected_backup_folder_id)
+            else:
+                st.session_state.monitoring_backup_folder_name = selected_backup_folder_id # Fallback to ID
+        elif st.session_state.get('monitoring_backup_folder_id'): # If already set, display its name
+            st.text(f"Selected Backup Folder: {st.session_state.get('monitoring_backup_folder_name', st.session_state.monitoring_backup_folder_id)}")
 
     st.markdown("#### 2. Monitoring Configuration")
     st.toggle(
