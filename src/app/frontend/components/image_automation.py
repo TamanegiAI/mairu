@@ -11,37 +11,25 @@ def update_monitoring_dropdown_options(spreadsheet_id_to_use, access_token_to_us
         st.session_state.monitoring_status_sheet_columns = ["None (do not update status)"]
     if 'monitoring_pfc_options' not in st.session_state:
         st.session_state.monitoring_pfc_options = ["None (process all rows)"]
-    if 'monitoring_status_column' not in st.session_state: # default selection
-        st.session_state.monitoring_status_column = "None (do not update status)"
-    if 'monitoring_process_flag_column' not in st.session_state: # default selection
-        st.session_state.monitoring_process_flag_column = "None (process all rows)"
+    
+    # Note: Don't set monitoring_status_column and monitoring_process_flag_column here
+    # since they are controlled by widgets with keys
 
     if spreadsheet_id_to_use and access_token_to_use:
         cols = get_sheet_columns(spreadsheet_id_to_use, access_token_to_use)
         common_cols = cols if cols else []
-        
-        current_status_col = st.session_state.monitoring_status_column
-        current_pfc_col = st.session_state.monitoring_process_flag_column
 
         st.session_state.monitoring_status_sheet_columns = ["None (do not update status)"] + common_cols
         st.session_state.monitoring_pfc_options = ["None (process all rows)"] + common_cols
         st.session_state._monitoring_pfc_options_source_id = spreadsheet_id_to_use
 
-        if current_status_col in st.session_state.monitoring_status_sheet_columns:
-            st.session_state.monitoring_status_column = current_status_col
-        else:
-            st.session_state.monitoring_status_column = "None (do not update status)"
-        
-        if current_pfc_col in st.session_state.monitoring_pfc_options:
-            st.session_state.monitoring_process_flag_column = current_pfc_col
-        else:
-            st.session_state.monitoring_process_flag_column = "None (process all rows)"
+        # Note: Widget-controlled values (monitoring_status_column, monitoring_process_flag_column) 
+        # are managed by their respective widgets, not set programmatically
             
     else: 
         st.session_state.monitoring_status_sheet_columns = ["None (do not update status)"]
         st.session_state.monitoring_pfc_options = ["None (process all rows)"]
-        st.session_state.monitoring_status_column = "None (do not update status)"
-        st.session_state.monitoring_process_flag_column = "None (process all rows)"
+        # Note: Don't set widget-controlled values here
         if '_monitoring_pfc_options_source_id' in st.session_state: # Clear source tracker
             del st.session_state['_monitoring_pfc_options_source_id']
 
@@ -146,6 +134,12 @@ def display_image_automation():
         st.warning("Authentication required. Please sign in first.")
         return
 
+    # Initialize session state for shared fields
+    if 'shared_recipient_email' not in st.session_state:
+        st.session_state.shared_recipient_email = ""
+    if 'shared_sheet_name' not in st.session_state:
+        st.session_state.shared_sheet_name = "Sheet1"
+
     # Initialize session state for folder monitoring if not already present
     if 'monitoring_trigger_folder_id' not in st.session_state:
         st.session_state.monitoring_trigger_folder_id = None
@@ -174,24 +168,29 @@ def display_image_automation():
     if 'folder_workflow_status_loaded' not in st.session_state:
         st.session_state.folder_workflow_status_loaded = False
 
-    # New session state variables for extended monitoring config
-    if 'monitoring_sheet_name' not in st.session_state:
-        st.session_state.monitoring_sheet_name = "Sheet1"
-    if 'monitoring_slides_template_id' not in st.session_state:
-        st.session_state.monitoring_slides_template_id = ""
-    if 'monitoring_recipient_email' not in st.session_state:
-        st.session_state.monitoring_recipient_email = ""
-    if 'monitoring_column_mappings_json' not in st.session_state:
-        st.session_state.monitoring_column_mappings_json = "{}" # Store as JSON string
-    if 'monitoring_pfc_options' not in st.session_state: # pfc = process_flag_column
-        st.session_state.monitoring_pfc_options = ["None (process all rows)"]
-    if 'monitoring_process_flag_column' not in st.session_state:
-        st.session_state.monitoring_process_flag_column = "None (process all rows)"
-    if 'monitoring_process_flag_value' not in st.session_state:
-        st.session_state.monitoring_process_flag_value = "yes"
-    
-    # File picker section
-    st.subheader("1. Select Files")
+    # === SHARED CONFIGURATION SECTION ===
+    st.subheader("📧 Shared Configuration")
+    with st.container():
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.text_input(
+                "Recipient Email", 
+                value=st.session_state.shared_recipient_email,
+                key='shared_recipient_email',
+                help="Email address to receive generated Instagram posts"
+            )
+        
+        with col2:
+            st.text_input(
+                "Sheet Name", 
+                value=st.session_state.shared_sheet_name,
+                key='shared_sheet_name',
+                help="Name of the sheet tab in your spreadsheet (e.g., 'Sheet1')"
+            )
+
+    # Section 1: File Selection (keep as is)
+    st.subheader("1. File Selection")
     
     # Create columns for better layout
     with st.container():
@@ -303,7 +302,7 @@ def display_image_automation():
                     st.session_state.monitoring_enabled = current_config.get('enabled', st.session_state.get('monitoring_enabled', False))
                     st.session_state.monitoring_trigger_folder_id = current_config.get('trigger_folder_id', st.session_state.get('monitoring_trigger_folder_id'))
                     st.session_state.monitoring_backup_folder_id = current_config.get('backup_folder_id', st.session_state.get('monitoring_backup_folder_id'))
-                    st.session_state.monitoring_frequency = current_config.get('monitoring_frequency_minutes', st.session_state.get('monitoring_frequency', 15))
+                    # Note: monitoring_frequency is controlled by widget, don't set programmatically
                     
                     # Spreadsheet ID: Config -> General Session -> Default Empty
                     st.session_state.monitoring_spreadsheet_id = current_config.get('spreadsheet_id')
@@ -344,30 +343,14 @@ def display_image_automation():
                     else:
                         st.session_state.monitoring_column_mappings_json = "{}"
 
-                    # Process Flag Column: Config -> General Session -> Default 'None'
-                    st.session_state.monitoring_process_flag_column = current_config.get('process_flag_column')
-                    if not st.session_state.monitoring_process_flag_column and st.session_state.get('process_flag_column') and st.session_state.process_flag_column != "None (process all rows)":
-                        st.session_state.monitoring_process_flag_column = st.session_state.process_flag_column
-                    if not st.session_state.monitoring_process_flag_column: # Ensure default if None
-                        st.session_state.monitoring_process_flag_column = "None (process all rows)"
-                    
-                    # Process Flag Value: Config -> General Session -> Default 'yes'
-                    st.session_state.monitoring_process_flag_value = current_config.get('process_flag_value')
-                    if not st.session_state.monitoring_process_flag_value and st.session_state.get('process_flag_value'):
-                         st.session_state.monitoring_process_flag_value = st.session_state.process_flag_value
-                    if not st.session_state.monitoring_process_flag_value: # Default if still not set
-                        st.session_state.monitoring_process_flag_value = "yes"
-
-                    # Status Column Name: Config -> Default 'None'
-                    st.session_state.monitoring_status_column = current_config.get('status_column_name')
-                    if not st.session_state.monitoring_status_column:
-                        st.session_state.monitoring_status_column = "None (do not update status)"
+                    # Note: monitoring_process_flag_column, monitoring_process_flag_value, 
+                    # and monitoring_status_column are controlled by widgets, don't set programmatically
 
                 else: # No current_config from backend, so populate from general session state or defaults
                     st.session_state.monitoring_enabled = st.session_state.get('monitoring_enabled', False)
                     st.session_state.monitoring_trigger_folder_id = st.session_state.get('monitoring_trigger_folder_id') # Retain if already set, else None
                     st.session_state.monitoring_backup_folder_id = st.session_state.get('monitoring_backup_folder_id') # Retain if already set, else None
-                    st.session_state.monitoring_frequency = st.session_state.get('monitoring_frequency', 15)
+                    # Note: monitoring_frequency is controlled by widget, don't set programmatically
 
                     if st.session_state.get('selected_spreadsheet'):
                         st.session_state.monitoring_spreadsheet_id = st.session_state.selected_spreadsheet.get('id', "")
@@ -391,13 +374,8 @@ def display_image_automation():
                     else:
                         st.session_state.monitoring_column_mappings_json = "{}"
 
-                    if st.session_state.get('process_flag_column') and st.session_state.process_flag_column != "None (process all rows)":
-                        st.session_state.monitoring_process_flag_column = st.session_state.process_flag_column
-                    else:
-                        st.session_state.monitoring_process_flag_column = "None (process all rows)"
-                    
-                    st.session_state.monitoring_process_flag_value = st.session_state.get('process_flag_value', "yes")
-                    st.session_state.monitoring_status_column = "None (do not update status)"
+                    # Note: monitoring_process_flag_column, monitoring_process_flag_value, 
+                    # and monitoring_status_column are controlled by widgets, don't set programmatically
 
                 # Common logic: Update dropdowns based on the determined spreadsheet ID
                 update_monitoring_dropdown_options(st.session_state.monitoring_spreadsheet_id, st.session_state.get("access_token"))
@@ -421,10 +399,7 @@ def display_image_automation():
                         try: st.session_state.monitoring_column_mappings_json = json.dumps(st.session_state.column_mappings, indent=2)
                         except TypeError: st.session_state.monitoring_column_mappings_json = "{}"
                     else: st.session_state.monitoring_column_mappings_json = "{}"
-                    if st.session_state.get('process_flag_column') and st.session_state.process_flag_column != "None (process all rows)":
-                        st.session_state.monitoring_process_flag_column = st.session_state.process_flag_column
-                    else: st.session_state.monitoring_process_flag_column = "None (process all rows)"
-                    st.session_state.monitoring_process_flag_value = st.session_state.get('process_flag_value', "yes")
+                    # Note: monitoring widgets are controlled by their respective widgets
                     update_monitoring_dropdown_options(st.session_state.monitoring_spreadsheet_id, st.session_state.get("access_token"))
 
         st.session_state.folder_workflow_status_loaded = True # Mark as loaded
@@ -438,56 +413,45 @@ def display_image_automation():
             st.error("Please select both Trigger and Backup folders.")
             return
         
-        # spreadsheet_id should be available from section 1
-        current_spreadsheet_id = None
-        if st.session_state.get('selected_spreadsheet') and st.session_state.selected_spreadsheet.get('id'):
-            current_spreadsheet_id = st.session_state.selected_spreadsheet.get('id')
-        elif 'spreadsheet_id' in locals() and spreadsheet_id: # Check if spreadsheet_id is defined from section 1
-            current_spreadsheet_id = spreadsheet_id
-        # else: current_spreadsheet_id remains None
-
-        if not current_spreadsheet_id:
-            # This was an issue, st.session_state.monitoring_spreadsheet_id should be used if set by UI
-            # or by status update. If not, then it's an error.
-            if st.session_state.get('monitoring_spreadsheet_id'):
-                current_spreadsheet_id = st.session_state.monitoring_spreadsheet_id
-            else:
-                st.error("Monitoring Spreadsheet ID not set. Please select or ensure it's loaded via status.")
-                return
+        if not st.session_state.shared_recipient_email or not st.session_state.shared_sheet_name:
+            st.error("Please fill in the recipient email and sheet name in the shared configuration section.")
+            return
+        
+        # Get spreadsheet and slides template IDs from session state
+        selected_spreadsheet_id = st.session_state.get('selected_spreadsheet', {}).get('id', '')
+        selected_slides_template_id = st.session_state.get('selected_slides_template', {}).get('id', '')
+        
+        if not selected_spreadsheet_id:
+            st.error("Please select a spreadsheet in the File Selection section.")
+            return
+            
+        if not selected_slides_template_id:
+            st.error("Please select a slides template in the File Selection section.")
+            return
 
         if st.session_state.monitoring_enabled and not st.session_state.monitoring_status_column:
             st.warning("It's recommended to select a Status Column when monitoring is enabled.")
 
-        column_mappings_dict = {}
-        try:
-            json_string_to_parse = str(st.session_state.get('monitoring_column_mappings_json', '{}'))
-            column_mappings_dict = json.loads(json_string_to_parse)
-            if not isinstance(column_mappings_dict, dict):
-                st.error("Column Mappings must be a valid JSON object (e.g., {\"key\": \"value\"}).")
-                return
-        except json.JSONDecodeError:
-            st.error("Invalid JSON format for Column Mappings. Please use double quotes for keys and string values.")
-            return
-        except Exception as e:
-            st.error(f"Error processing Column Mappings: {e}")
-            return
-
+        # Use column mappings from the main section, or default to empty
+        column_mappings_dict = st.session_state.get('column_mappings', {})
+        
         config_data = {
             "enabled": st.session_state.monitoring_enabled,
             "trigger_folder_id": st.session_state.monitoring_trigger_folder_id,
             "backup_folder_id": st.session_state.monitoring_backup_folder_id,
-            # Use the specific monitoring_spreadsheet_id from session state, not the general one from section 1
-            "spreadsheet_id": st.session_state.monitoring_spreadsheet_id, 
+            # Use the selected spreadsheet from section 1
+            "spreadsheet_id": selected_spreadsheet_id,
             "status_column_name": st.session_state.monitoring_status_column if st.session_state.monitoring_status_column != "None (do not update status)" else None,
             "monitoring_frequency_minutes": st.session_state.monitoring_frequency,
             
-            "sheet_name": st.session_state.monitoring_sheet_name,
-            "slides_template_id": st.session_state.monitoring_slides_template_id,
-            "recipient_email": st.session_state.monitoring_recipient_email,
+            # Use shared configuration
+            "sheet_name": st.session_state.shared_sheet_name,
+            "slides_template_id": selected_slides_template_id,
+            "recipient_email": st.session_state.shared_recipient_email,
             "column_mappings": column_mappings_dict,
-            "process_flag_column": st.session_state.monitoring_process_flag_column if st.session_state.monitoring_process_flag_column != "None (process all rows)" else None,
-            "process_flag_value": st.session_state.monitoring_process_flag_value,
-            "background_image_id": st.session_state.background_image_id,
+            "process_flag_column": st.session_state.get('monitoring_process_flag_column') if st.session_state.get('monitoring_process_flag_column') != "None (process all rows)" else st.session_state.get('process_flag_column'),
+            "process_flag_value": st.session_state.get('monitoring_process_flag_value', st.session_state.get('process_flag_value', 'yes')),
+            "background_image_id": st.session_state.get('background_image_id'),
             "backup_folder_id": st.session_state.get('monitoring_backup_folder_id')
         }
         response = configure_folder_monitoring(config_data, st.session_state.access_token)
@@ -535,17 +499,33 @@ def display_image_automation():
             st.text(f"Selected Backup Folder: {st.session_state.get('monitoring_backup_folder_name', st.session_state.monitoring_backup_folder_id)}")
 
     st.markdown("#### 2. Monitoring Configuration")
-    st.toggle(
-        "Enable Monitoring", 
-        value=st.session_state.get('monitoring_enabled', False), 
-        key='monitoring_enabled' # Corrected key
+    
+    # Check if required fields are filled
+    can_start_monitoring = (
+        st.session_state.shared_recipient_email and 
+        st.session_state.shared_sheet_name and
+        st.session_state.monitoring_trigger_folder_id and 
+        st.session_state.monitoring_backup_folder_id
     )
+    
+    if not can_start_monitoring:
+        st.warning("⚠️ Please complete the following before starting monitoring:")
+        if not st.session_state.shared_recipient_email:
+            st.write("- Fill in the recipient email in the shared configuration")
+        if not st.session_state.shared_sheet_name:
+            st.write("- Fill in the sheet name in the shared configuration")
+        if not st.session_state.monitoring_trigger_folder_id:
+            st.write("- Select an Image Trigger Folder")
+        if not st.session_state.monitoring_backup_folder_id:
+            st.write("- Select an Image Backup Folder")
+    else:
+        st.success(f"✅ Ready to monitor | Email: '{st.session_state.shared_recipient_email}' | Sheet: '{st.session_state.shared_sheet_name}'")
 
     st.number_input(
         "Monitoring Frequency (minutes)", 
         min_value=1, 
-        value=st.session_state.get('monitoring_frequency', 15), # Default changed to 15 to match update_monitoring_status_display
-        key='monitoring_frequency' # Corrected key
+        value=st.session_state.get('monitoring_frequency', 15), 
+        key='monitoring_frequency'
     )
 
     # Pre-calculate index for Process Flag Column selectbox
@@ -588,6 +568,28 @@ def display_image_automation():
             st.session_state.monitoring_status_column = status_options[0]
     except ValueError:
         status_index = 0
+
+    st.selectbox(
+        "Status Column Name (Optional)",
+        options=status_options,
+        index=status_index,
+        key='monitoring_status_column',
+        help="Select a column to store processing status like 'Sent', 'Failed', etc. If 'None', no status updates."
+    )
+
+    # Start/Stop Monitoring buttons
+    st.markdown("#### Start/Stop Monitoring")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🚀 Start Monitoring", disabled=not can_start_monitoring, type="primary"):
+            st.session_state.monitoring_enabled = True
+            handle_save_monitoring_config()
+    
+    with col2:
+        if st.button("⏹️ Stop Monitoring", disabled=not st.session_state.get('monitoring_enabled', False)):
+            st.session_state.monitoring_enabled = False
+            handle_save_monitoring_config()
         st.markdown("#### 3. Status Information")
 
         # Initialize session states for status info if they don't exist
@@ -648,13 +650,14 @@ function createInstagramPost() {
     st.markdown("---") # Add a separator
     st.subheader("Manual Instagram Post Generation")
     
-    # Sheet name input
-    manual_sheet_name = st.text_input("Sheet Name (for manual generation)", value="Sheet1", 
-                            help="Name of the sheet containing your content for manual post generation", key="manual_sheet_name")
+    # Use shared configuration
+    manual_sheet_name = st.session_state.shared_sheet_name
+    manual_recipient_email = st.session_state.shared_recipient_email
     
-    # Recipient email
-    manual_recipient_email = st.text_input("Recipient Email (for manual generation)", 
-                                 help="Email address to receive the manually generated posts", key="manual_recipient_email")
+    if not manual_recipient_email or not manual_sheet_name:
+        st.warning("⚠️ Please fill in the shared email and sheet name in the configuration section above.")
+    else:
+        st.success(f"✅ Using: Sheet '{manual_sheet_name}' | Email: '{manual_recipient_email}'")
     
     # Image selection
     st.subheader("Select Background Image")

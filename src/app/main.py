@@ -661,7 +661,7 @@ async def configure_monitoring(
             token_info = {
                 'token': access_token,
                 'refresh_token': refresh_token,
-                'token_uri': auth.TOKEN_URI,
+                'token_uri': 'https://oauth2.googleapis.com/token',
                 'client_id': auth.client_id,
                 'client_secret': auth.client_secret,
                 'scopes': auth.SCOPES
@@ -674,13 +674,13 @@ async def configure_monitoring(
             token_info = {
                 'token': stored_tokens.get('token'),
                 'refresh_token': stored_tokens.get('refresh_token'),
-                'token_uri': auth.TOKEN_URI,
+                'token_uri': 'https://oauth2.googleapis.com/token',
                 'client_id': auth.client_id,
                 'client_secret': auth.client_secret,
                 'scopes': auth.SCOPES
             }
 
-        valid_token_info = await auth.validate_and_refresh_token(token_info, db)
+        valid_token_info = await auth.validate_and_refresh_token(token_info)
         if not valid_token_info or not valid_token_info.get('token'):
              raise HTTPException(status_code=401, detail="Invalid or expired token after validation.")
 

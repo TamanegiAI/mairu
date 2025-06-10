@@ -112,6 +112,7 @@ class MonitoringConfigRequest(BaseModel):
     column_mappings: Optional[Dict[str, str]] = None  # Mapping of placeholders to column names
     process_flag_column: Optional[str] = None  # Column name to check for processing flag
     process_flag_value: Optional[str] = "yes"  # Value that indicates to process the row
+    background_image_id: Optional[str] = None  # Drive ID of the background image to use in templates
 
 class MonitoringConfigResponse(BaseModel):
     success: bool

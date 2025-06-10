@@ -130,6 +130,31 @@ class DriveService:
                 detail=f"Failed to list folder contents: {str(e)}"
             )
 
+    def move_file(self, file_id: str, new_parent_id: str):
+        """Move a file to a new parent folder."""
+        try:
+            # Get the current parents
+            file_info = self.service.files().get(fileId=file_id, fields='parents').execute()
+            if not file_info:
+                raise HTTPException(status_code=404, detail="File not found")
+            
+            previous_parents = ",".join(file_info.get('parents', []))
+            
+            # Move the file to the new parent
+            updated_file = self.service.files().update(
+                fileId=file_id,
+                addParents=new_parent_id,
+                removeParents=previous_parents,
+                fields='id, parents'
+            ).execute()
+            
+            return updated_file
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to move file: {str(e)}"
+            )
+
 class DriveAuth:
     """Google Drive authentication and service provider."""
     

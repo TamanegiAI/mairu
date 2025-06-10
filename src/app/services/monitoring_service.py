@@ -75,8 +75,9 @@ class FolderMonitoringService:
             logger.info("Monitoring disabled.")
             return {"success": True, "message": "Monitoring disabled."}
 
-    async def _check_trigger_folder_job_wrapper(self):
-        """Wrapper to call the async _check_trigger_folder with stored auth."""
+    def _check_trigger_folder_job_wrapper(self):
+        """Wrapper to call the _check_trigger_folder with stored auth."""
+        logger.info("Monitoring job triggered - checking trigger folder...")
         if not self.current_config or not self.current_auth_details:
             logger.error("Monitoring job called without configuration or auth details.")
             return
@@ -88,10 +89,17 @@ class FolderMonitoringService:
             # The GoogleAuth service has validate_and_refresh_token, but it's async and needs a db session.
             # For a background job, this interaction needs careful design.
             # For now, we'll assume the token is valid or DriveService handles it.
-            drive_service = DriveService(token_info=self.current_auth_details)
-            await self._check_trigger_folder(drive_service)
+            drive_service = DriveService(token_info_or_token=self.current_auth_details)
+            # Changed to synchronous call since scheduler jobs should be synchronous
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self._check_trigger_folder(drive_service))
+            loop.close()
         except Exception as e:
             logger.error(f"Error in _check_trigger_folder_job_wrapper: {e}")
+            import traceback
+            traceback.print_exc()
             self.error_message = f"Error during folder check: {e}"
 
     async def _check_trigger_folder(self, drive_service: DriveService):
@@ -102,18 +110,23 @@ class FolderMonitoringService:
         logger.info(f"Checking trigger folder: {self.current_config.trigger_folder_id}")
         self.last_check_timestamp = datetime.utcnow()
         self.error_message = None # Clear previous error on new check
+        
+        logger.info(f"Config - Sheet: {getattr(self.current_config, 'sheet_name', 'None')}, Template: {getattr(self.current_config, 'slides_template_id', 'None')}, Email: {getattr(self.current_config, 'recipient_email', 'None')}")
 
         try:
             # List files in the trigger folder, looking for images
-            # Mime types for common images: 'image/jpeg', 'image/png', 'image/gif'
-            # Query: f"'{self.current_config.trigger_folder_id}' in parents and (mimeType='image/jpeg' or mimeType='image/png') and trashed=false"
-            query = f"'{self.current_config.trigger_folder_id}' in parents and trashed=false"
-            files = drive_service.search_files(query=query, fields="files(id, name, mimeType, createdTime)")
+            # Using list_files_in_folder which is designed for this purpose
+            files = drive_service.list_files_in_folder(self.current_config.trigger_folder_id)
+            
+            # Filter for image files only (optional but recommended)
+            image_mime_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+            files = [f for f in files if f.get('mimeType', '').lower() in image_mime_types]
 
             if not files:
-                logger.info("No files found in the trigger folder.")
+                logger.info("No image files found in the trigger folder.")
                 # Potentially update status: "No new images found"
                 self.last_processed_image_name = None # Clear last processed if folder is empty
+                self.last_processed_image_status = "No images found"
                 return
 
             # For now, process only one image at a time as per requirements
@@ -147,16 +160,19 @@ class FolderMonitoringService:
 
             logger.info(f"Attempting to generate post for image: {image_file['name']}")
             try:
+                # Use the configured background image if available, otherwise use the detected trigger image
+                background_image_to_use = getattr(self.current_config, 'background_image_id', None) or image_file['id']
+                
                 post_generation_result = instagram_service.generate_posts(
                     spreadsheet_id=self.current_config.spreadsheet_id,
                     sheet_name=config_sheet_name, 
                     slides_template_id=config_slides_template_id,
-                    drive_folder_id=None, # Output folder for generate_posts, may not be needed if image_url is direct
+                    drive_folder_id=self.current_config.backup_folder_id, # Use backup folder as output folder
                     recipient_email=config_recipient_email,
                     column_mappings=config_column_mappings,
                     process_flag_column=config_process_flag_column,
                     process_flag_value=config_process_flag_value,
-                    image_url=image_file['id'], # Pass Drive file ID as image_url
+                    background_image_id=background_image_to_use, # Use background_image_id instead of image_url
                     update_status_column=self.current_config.status_column_name
                 )
 
