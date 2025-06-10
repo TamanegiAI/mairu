@@ -613,6 +613,8 @@ async def generate_instagram_posts(
             column_mappings=request.column_mappings or {},
             process_flag_column=request.process_flag_column,
             process_flag_value=request.process_flag_value or "yes",
+            background_image_id=request.background_image_id, # Updated to use background_image_id
+            backup_folder_id=request.backup_folder_id # Pass the backup folder ID
             # image_url and update_status_column are optional in generate_posts
             # and not explicitly in InstagramPostRequest, so they will be None by default
         )
@@ -621,7 +623,12 @@ async def generate_instagram_posts(
         # {"success": True/False, "count": N, "files": [...], "message": "..."}
         # We need to adapt this to InstagramPostResponse which expects count and files.
         if result.get("success"):
-            return InstagramPostResponse(count=result.get("count", 0), files=result.get("files", []))
+            return InstagramPostResponse(
+                success=result.get("success"),
+                count=result.get("count", 0),
+                message=result.get("message", "Posts generated successfully."), # Provide a default if message is somehow missing
+                files=result.get("files", [])
+            )
         else:
             raise HTTPException(
                 status_code=500, 

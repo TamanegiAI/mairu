@@ -82,12 +82,19 @@ class InstagramPostRequest(BaseModel):
     column_mappings: Optional[Dict[str, str]] = None  # Mapping of placeholders to column names
     process_flag_column: Optional[str] = None  # Column name to check for processing flag
     process_flag_value: Optional[str] = "yes"  # Value that indicates to process the row
+    background_image_id: Optional[str] = None  # Drive ID of the background image to use in the template
+    backup_folder_id: Optional[str] = None      # Specific Drive Folder ID for backing up generated posts
+
+class GeneratedFileInfo(BaseModel):
+    png_id: str
+    slide_id: str
+    name: str
 
 class InstagramPostResponse(BaseModel):
     success: bool
     count: int
     message: str
-    files: Optional[List[str]] = None
+    files: Optional[List[GeneratedFileInfo]] = None
 
 
 class MonitoringConfigRequest(BaseModel):

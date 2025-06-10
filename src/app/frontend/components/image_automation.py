@@ -285,60 +285,7 @@ def display_image_automation():
             process_flag_column = None
             flag_value = "yes"
     
-    # Configuration section  
-    st.subheader("4. Configure")
-    
-    with st.form("instagram_post_form"):
-        # Sheet name input
-        sheet_name = st.text_input("Sheet Name", value="Sheet1", 
-                                help="Name of the sheet containing your content")
-        
-        # Recipient email
-        recipient_email = st.text_input("Recipient Email", 
-                                     help="Email address to receive the generated posts")
-        
-        # Submit button
-        generate_button = st.form_submit_button("Generate Instagram Posts")
-        
-        if generate_button:
-            if not (spreadsheet_id and slides_template_id and drive_folder_id and recipient_email):
-                st.error("Please select all required files and provide an email address")
-            else:
-                with st.spinner("Generating Instagram posts..."):
-                    try:
-                        # Prepare column mappings
-                        mappings = st.session_state.column_mappings if hasattr(st.session_state, 'column_mappings') else {}
-                        
-                        # Get process flag settings
-                        flag_column = process_flag_column if process_flag_column != "None (process all rows)" else None
-                        
-                        # API call to backend to generate posts
-                        headers = {"Authorization": f"Bearer {access_token}"}
-                        data = {
-                            "spreadsheet_id": spreadsheet_id,
-                            "sheet_name": sheet_name,
-                            "slides_template_id": slides_template_id,
-                            "drive_folder_id": drive_folder_id,
-                            "recipient_email": recipient_email,
-                            "column_mappings": mappings,
-                            "process_flag_column": flag_column,
-                            "process_flag_value": flag_value
-                        }
-                        
-                        response = requests.post(
-                            f"{API_BASE_URL}/instagram/generate",
-                            json=data,
-                            headers=headers
-                        )
-                        
-                        if response.status_code == 200:
-                            result = response.json()
-                            st.success("Instagram posts generated and sent successfully!")
-                            st.info(f"Generated {result.get('count', 0)} posts and emailed to {recipient_email}")
-                        else:
-                            st.error(f"Error generating posts: {response.text}")
-                    except Exception as e:
-                        st.error(f"Error connecting to API: {str(e)}")
+    # The manual configuration section has been moved to the end of the function.
     
     # --- Folder Workflow Callbacks ---
     def update_monitoring_status_display():
@@ -539,7 +486,9 @@ def display_image_automation():
             "recipient_email": st.session_state.monitoring_recipient_email,
             "column_mappings": column_mappings_dict,
             "process_flag_column": st.session_state.monitoring_process_flag_column if st.session_state.monitoring_process_flag_column != "None (process all rows)" else None,
-            "process_flag_value": st.session_state.monitoring_process_flag_value
+            "process_flag_value": st.session_state.monitoring_process_flag_value,
+            "background_image_id": st.session_state.background_image_id,
+            "backup_folder_id": st.session_state.get('monitoring_backup_folder_id')
         }
         response = configure_folder_monitoring(config_data, st.session_state.access_token)
         if response and response.get("success"):
@@ -598,11 +547,6 @@ def display_image_automation():
         value=st.session_state.get('monitoring_frequency', 15), # Default changed to 15 to match update_monitoring_status_display
         key='monitoring_frequency' # Corrected key
     )
-
-
-
-
-
 
     # Pre-calculate index for Process Flag Column selectbox
     pfc_options = st.session_state.get('monitoring_pfc_options', ["None (process all rows)"])
@@ -699,3 +643,59 @@ function createInstagramPost() {
   // 5. Email the image
 }
         """, language="javascript")
+
+    # Configuration section for Manual Instagram Post Generation (moved to end)
+    st.markdown("---") # Add a separator
+    st.subheader("Manual Instagram Post Generation")
+    
+    # Sheet name input
+    manual_sheet_name = st.text_input("Sheet Name (for manual generation)", value="Sheet1", 
+                            help="Name of the sheet containing your content for manual post generation", key="manual_sheet_name")
+    
+    # Recipient email
+    manual_recipient_email = st.text_input("Recipient Email (for manual generation)", 
+                                 help="Email address to receive the manually generated posts", key="manual_recipient_email")
+    
+    # Image selection
+    st.subheader("Select Background Image")
+    if 'background_image_id' not in st.session_state:
+        st.session_state.background_image_id = None
+    
+    # Display file picker and update session state when an image is selected
+    selected_image = display_file_picker("Background Image", access_token)
+    if selected_image:
+        st.session_state.background_image_id = selected_image
+    
+    # Show selected image ID if any
+    if st.session_state.background_image_id:
+        st.info(f"Selected Image ID: {st.session_state.background_image_id}")
+    
+    # Submit button
+    manual_generate_button = st.button("Generate Instagram Posts (Manual)", key="manual_generate_button")
+    
+    if manual_generate_button:
+        if not spreadsheet_id or not slides_template_id or not drive_folder_id:
+            st.error("Please select all required files (Spreadsheet, Slides Template, and Drive Folder)")
+        else:
+            with st.spinner("Generating Instagram posts..."):
+                result = generate_instagram_post(
+                    spreadsheet_id=spreadsheet_id,
+                    sheet_name=manual_sheet_name,
+                    slides_template_id=slides_template_id,
+                    drive_folder_id=drive_folder_id,
+                    recipient_email=manual_recipient_email,
+                    access_token=access_token,
+                    background_image_id=st.session_state.background_image_id,
+                    column_mappings=st.session_state.column_mappings if hasattr(st.session_state, 'column_mappings') else None,
+                    process_flag_column=st.session_state.process_flag_column if hasattr(st.session_state, 'process_flag_column') else None,
+                    process_flag_value=st.session_state.process_flag_value if hasattr(st.session_state, 'process_flag_value') else "yes"
+                )
+                
+                if result.get("success"):
+                    st.success(f"Successfully generated {result.get('count', 0)} posts!")
+                    if result.get("files"):
+                        st.write("Generated files:")
+                        for file in result["files"]:
+                            st.write(f"- {file['name']} (ID: {file['png_id']})")
+                else:
+                    st.error(f"Failed to generate posts: {result.get('message', 'Unknown error')}")

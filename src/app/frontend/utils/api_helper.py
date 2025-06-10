@@ -343,9 +343,14 @@ def generate_instagram_post(
     slides_template_id: str,
     drive_folder_id: str,
     recipient_email: str,
-    access_token: str
+    access_token: str,
+    background_image_id: Optional[str] = None,
+    column_mappings: Optional[Dict[str, str]] = None,
+    process_flag_column: Optional[str] = None,
+    process_flag_value: str = "yes",
+    backup_folder_id: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Generate Instagram posts from spreadsheet data"""
+    """Generate Instagram posts from spreadsheet data using a Slides template"""
     try:
         response = requests.post(
             f"{API_BASE_URL}/instagram/generate",
@@ -358,14 +363,15 @@ def generate_instagram_post(
                 "sheet_name": sheet_name,
                 "slides_template_id": slides_template_id,
                 "drive_folder_id": drive_folder_id,
-                "recipient_email": recipient_email
+                "recipient_email": recipient_email,
+                "background_image_id": background_image_id,
+                "column_mappings": column_mappings,
+                "process_flag_column": process_flag_column,
+                "process_flag_value": process_flag_value,
+                "backup_folder_id": backup_folder_id
             }
         )
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Failed to generate posts: {response.text}")
-            return {"success": False, "message": response.text}
+        return response.json()
     except Exception as e:
-        st.error(f"Error generating posts: {str(e)}")
+        st.error(f"Error generating Instagram posts: {str(e)}")
         return {"success": False, "message": str(e)}
