@@ -1,29 +1,60 @@
-# Ignore SQLite database file
+# Sensitive files - DO NOT COMMIT
+*.env
+.env*
+credentials.json
+token.json
 app.db
+*.db
 
-# Ignore alembic migrations (except versions folder)
+# Google OAuth & API files
+src/app/credentials.json
+client_secret*.json
+service_account*.json
+
+# Logs
+*.log
+logs/
+
+# SQLite database files
+*.sqlite
+*.sqlite3
+*.db
+
+# Alembic migrations
 alembic/versions/*.pyc
 alembic/versions/__pycache__/
 
-# Ignore compiled Python files
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Ignore virtual environment (if using venv)
+*.so
+.Python
+env/
 venv/
-.env
+.venv/
+ENV/
+env.bak/
+venv.bak/
 
-# Ignore VS Code settings (optional)
+# Poetry
+.poetry-cache/
+dist/
+*.egg-info/
+
+# IDEs
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-credintials.json
-
-.venv
-.poetry-cache/artifacts/66/31/78/fde53410ee8cfcee151a8fd46b33a872798521fe1fd21c317ee642ac36/h11-0.16.0-py3-none-any.whl
-.poetry-cache
-token.json
-src/app/credentials.json
-src/app/credentials.json
-credentials.json
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
