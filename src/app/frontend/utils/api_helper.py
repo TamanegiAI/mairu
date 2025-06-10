@@ -289,15 +289,68 @@ def search_drive_files(query: str, file_type: str, access_token: str) -> List[Di
         st.error(f"Error searching files: {str(e)}")
         return []
 
+# --- Folder Monitoring API Calls ---
+
+def configure_folder_monitoring(config_data: Dict[str, Any], access_token: str) -> Dict[str, Any]:
+    """Send folder monitoring configuration to the backend."""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/monitoring/config",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            json=config_data
+        )
+        response.raise_for_status() # Raise an exception for bad status codes
+        return response.json()
+    except requests.exceptions.HTTPError as http_err:
+        st.error(f"HTTP error configuring monitoring: {http_err} - {response.text}")
+        # Try to parse error response if JSON
+        try:
+            return response.json() # Return backend error details if available
+        except json.JSONDecodeError:
+            return {"success": False, "message": response.text, "error_detail": str(http_err)}
+    except Exception as e:
+        st.error(f"Error configuring monitoring: {str(e)}")
+        return {"success": False, "message": str(e)}
+
+def get_folder_monitoring_status(access_token: str) -> Dict[str, Any]:
+    """Get current folder monitoring status from the backend."""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/monitoring/status",
+            headers={"Authorization": f"Bearer {access_token}"} # Token might not be strictly needed by backend here, but good practice
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as http_err:
+        st.error(f"HTTP error fetching monitoring status: {http_err} - {response.text}")
+        try:
+            return response.json()
+        except json.JSONDecodeError:
+            return {"is_monitoring_active": False, "status_message": "Error fetching status", "error_message": response.text}
+    except Exception as e:
+        st.error(f"Error fetching monitoring status: {str(e)}")
+        return {"is_monitoring_active": False, "status_message": "Error fetching status", "error_message": str(e)}
+
+# --- End Folder Monitoring API Calls ---
+
+
 def generate_instagram_post(
     spreadsheet_id: str, 
     sheet_name: str,
     slides_template_id: str,
     drive_folder_id: str,
     recipient_email: str,
-    access_token: str
+    access_token: str,
+    background_image_id: Optional[str] = None,
+    column_mappings: Optional[Dict[str, str]] = None,
+    process_flag_column: Optional[str] = None,
+    process_flag_value: str = "yes",
+    backup_folder_id: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Generate Instagram posts from spreadsheet data"""
+    """Generate Instagram posts from spreadsheet data using a Slides template"""
     try:
         response = requests.post(
             f"{API_BASE_URL}/instagram/generate",
@@ -310,14 +363,15 @@ def generate_instagram_post(
                 "sheet_name": sheet_name,
                 "slides_template_id": slides_template_id,
                 "drive_folder_id": drive_folder_id,
-                "recipient_email": recipient_email
+                "recipient_email": recipient_email,
+                "background_image_id": background_image_id,
+                "column_mappings": column_mappings,
+                "process_flag_column": process_flag_column,
+                "process_flag_value": process_flag_value,
+                "backup_folder_id": backup_folder_id
             }
         )
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Failed to generate posts: {response.text}")
-            return {"success": False, "message": response.text}
+        return response.json()
     except Exception as e:
-        st.error(f"Error generating posts: {str(e)}")
+        st.error(f"Error generating Instagram posts: {str(e)}")
         return {"success": False, "message": str(e)}

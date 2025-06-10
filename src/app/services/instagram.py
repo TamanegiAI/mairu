@@ -10,7 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 import io
 import requests
-from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 
 class InstagramService:
     """Service for generating Instagram posts from Google Sheets data using Slides templates."""
@@ -82,13 +82,15 @@ class InstagramService:
                       spreadsheet_id: str,
                       sheet_name: str,
                       slides_template_id: str,
-                      drive_folder_id: str,
+                      drive_folder_id: str, 
                       recipient_email: str,
-                      column_mappings: Dict[str, str] = None,
-                      process_flag_column: str = None,
+                      column_mappings: Optional[Dict[str, str]] = None,
+                      process_flag_column: Optional[str] = None,
                       process_flag_value: str = "yes",
-                      image_url: str = None,
-                      update_status_column: str = None) -> Dict[str, Any]:
+                      image_url: Optional[str] = None,
+                      update_status_column: Optional[str] = None,
+                      background_image_id: Optional[str] = None,
+                      backup_folder_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate Instagram posts from spreadsheet data using a Slides template.
         
@@ -103,11 +105,14 @@ class InstagramService:
         - process_flag_value: Value in flag column that indicates row should be processed
         - image_url: Optional URL of image to replace placeholder images in slides
         - update_status_column: Optional column name to update with processing status
+        - background_image_id: Optional Drive ID of image to use as background in slides
+        - backup_folder_id: Optional ID of folder to save generated images as backup
         """
         try:
+            print(f"DEBUG: generate_posts called with background_image_id='{background_image_id}', backup_folder_id='{backup_folder_id}'")
             # 1. Get data from the spreadsheet
             sheet_data = self._get_sheet_data(spreadsheet_id, sheet_name)
-            if not sheet_data or len(sheet_data) <= 1:  # Check if there's data beyond header row
+            if not sheet_data or len(sheet_data) <= 1:  
                 return {
                     "success": False,
                     "count": 0,
@@ -115,7 +120,7 @@ class InstagramService:
                 }
             
             # 2. Process headers and set up column indices
-            headers = sheet_data[0]  # First row contains headers
+            headers = sheet_data[0]  
             
             # Set up column mappings
             mapping_indices = {}
@@ -127,7 +132,6 @@ class InstagramService:
                     else:
                         print(f"Warning: Column '{column_name}' not found for placeholder '{placeholder}'")
             else:
-                # Default to Japanese column if no mapping provided
                 japanese_idx = self._find_column_index(headers, "Japanese")
                 if japanese_idx != -1:
                     mapping_indices["{{TEXT}}"] = japanese_idx
@@ -146,9 +150,7 @@ class InstagramService:
             if update_status_column:
                 status_col_idx = self._find_column_index(headers, update_status_column)
                 if status_col_idx == -1:
-                    # If column doesn't exist, default to column after the last one
                     status_col_idx = len(headers)
-                    # Add the status column header
                     self._update_cell(spreadsheet_id, sheet_name, 1, status_col_idx + 1, "Status")
             
             # Validate we have at least one mapping
@@ -164,19 +166,47 @@ class InstagramService:
             processed_count = 0
             skipped_count = 0
             
-            # Fetch image if URL is provided
+            # Determine target folder for generation outputs
+            target_folder_for_generation = backup_folder_id if backup_folder_id else drive_folder_id
+            if not target_folder_for_generation:
+                print("CRITICAL ERROR: No target folder specified for generation (backup_folder_id or drive_folder_id required).")
+                return {
+                    "success": False, "count": 0,
+                    "message": "A target folder (backup_folder_id or drive_folder_id) must be specified for generation output."
+                }
+            print(f"Using target folder for generation outputs: {target_folder_for_generation}")
+
+            # Determine image_content: prioritize background_image_id, then image_url
             image_content = None
-            if image_url:
+            print(f"DEBUG: Initial image_content is None. Checking background_image_id='{background_image_id}' and image_url='{image_url}'")
+            if background_image_id:
                 try:
-                    response = requests.get(image_url)
-                    if response.status_code == 200:
-                        image_content = response.content
-                        print(f"Successfully fetched image from {image_url}")
-                    else:
-                        print(f"Failed to fetch image from {image_url}: {response.status_code}")
+                    if not hasattr(self, 'drive_service') or self.drive_service is None:
+                        raise Exception("Drive service not initialized during image fetch.")
+                    print(f"Fetching image content from Drive ID: {background_image_id}")
+                    # Set the file permission to public (anyone with the link can view)
+                    try:
+                        self.drive_service.permissions().create(
+                            fileId=background_image_id,
+                            body={'type': 'anyone', 'role': 'reader'},
+                        ).execute()
+                        print(f"Set file permission to public for image {background_image_id}")
+                    except Exception as e:
+                        print(f"Warning: Could not set file permission to public: {str(e)}")
+                    # Get the public URL for the image
+                    file = self.drive_service.files().get(fileId=background_image_id, fields='webContentLink').execute()
+                    image_url = file.get('webContentLink')
+                    print(f"Using public image URL: {image_url}")
                 except Exception as e:
-                    print(f"Error fetching image from {image_url}: {str(e)}")
-            
+                    print(f"DEBUG: Error preparing public image URL from Drive ID {background_image_id}: {str(e)}")
+                    image_url = None
+            elif image_url:
+                # If image_url is provided directly, use it
+                pass
+            else:
+                image_url = None
+        
+            print(f"DEBUG: image_content before loop: {'present (size: ' + str(len(image_content)) + ')' if 'image_content' in locals() and image_content else 'None'}")
             # Process each row (skip header)
             for i, row in enumerate(sheet_data[1:], 1):
                 try:
@@ -184,7 +214,6 @@ class InstagramService:
                     should_process = True
                     if process_flag_idx != -1 and process_flag_idx < len(row):
                         flag_value = row[process_flag_idx] if process_flag_idx < len(row) else ""
-                        # Fix: Trim whitespace from flag values before comparison
                         should_process = (flag_value.lower().strip() == process_flag_value.lower().strip())
                         print(f"Row {i}: Flag value '{flag_value}', should process: {should_process}")
                     
@@ -215,65 +244,117 @@ class InstagramService:
                     if status_col_idx != -1:
                         self._update_cell(spreadsheet_id, sheet_name, i + 1, status_col_idx + 1, "Processing...")
                     
+                    print(f"DEBUG: Row {i}: image_content passed to _generate_post_from_template: {'present (size: ' + str(len(image_content)) + ')' if 'image_content' in locals() and image_content else 'None'}")
                     # Generate post for this row
-                    file_id = self._generate_post_from_template(
-                        slides_template_id, 
+                    generation_result = self._generate_post_from_template(
+                        slides_template_id,
                         text_replacements,
-                        drive_folder_id,
+                        target_folder_for_generation, 
                         f"InstagramPost_{i}",
-                        image_content
+                        image_url=image_url
                     )
                     
-                    if file_id:
-                        generated_files.append(file_id)
+                    if generation_result:
+                        png_id, slide_id = generation_result
+                        file_entry = {
+                            "png_id": png_id,
+                            "slide_id": slide_id,
+                            "name": f"InstagramPost_{i}"
+                        }
+                        # Back up the original background image if applicable
+                        print(f"DEBUG: Row {i}: Checking for original image backup. background_image_id='{background_image_id}', backup_folder_id='{backup_folder_id}'")
+                        if background_image_id and backup_folder_id:
+                            try:
+                                # Fetch original image's metadata to get its name for the copy
+                                original_image_meta = self.drive_service.files().get(
+                                    fileId=background_image_id, fields='name'
+                                ).execute()
+                                original_image_name_for_copy = original_image_meta.get('name', f"Original_Background_Image_{i}")
+                                
+                                copy_body = {
+                                    'name': original_image_name_for_copy,
+                                    'parents': [backup_folder_id]
+                                }
+                                backed_up_original_file = self.drive_service.files().copy(
+                                    fileId=background_image_id, # Source is the original background image
+                                    body=copy_body,
+                                    fields='id'
+                                ).execute()
+                                original_image_backup_id = backed_up_original_file.get('id')
+                                file_entry['original_image_backup_id'] = original_image_backup_id
+                                print(f"DEBUG: Row {i}: Successfully backed up original background image {background_image_id} to {original_image_backup_id} in folder {backup_folder_id} as '{original_image_name_for_copy}'")
+                                
+                                # Optionally: Delete original image from trigger folder after successful backup
+                                # self.drive_service.files().delete(fileId=background_image_id).execute()
+                                # print(f"Row {i}: Deleted original background image {background_image_id} from trigger folder.")
+
+                            except Exception as e:
+                                print(f"DEBUG: Row {i}: Error backing up original background image {background_image_id}: {str(e)}")
+                        
+                        generated_files.append(file_entry)
                         processed_count += 1
-                        print(f"Row {i}: Generated post with file ID {file_id}")
+                        print(f"Row {i}: Generated post with file ID {png_id}")
                         if status_col_idx != -1:
+                            print(f"DEBUG: Row {i}: Attempting to update status to 'Sent'")
                             self._update_cell(spreadsheet_id, sheet_name, i + 1, status_col_idx + 1, "Sent")
-                    else:
+                            print(f"DEBUG: Row {i}: Successfully updated status to 'Sent'")
+                    else: # This 'else' corresponds to 'if generation_result:'
                         skipped_count += 1
                         if status_col_idx != -1:
+                            print(f"DEBUG: Row {i}: Attempting to update status to 'Failed to generate'")
                             self._update_cell(spreadsheet_id, sheet_name, i + 1, status_col_idx + 1, "Failed to generate")
+                            print(f"DEBUG: Row {i}: Successfully updated status to 'Failed to generate'")
                         print(f"Row {i}: Failed to generate post")
-                        
-                except Exception as e:
-                    print(f"Error processing row {i}: {str(e)}")
+                
+                except Exception as e: # This 'except' corresponds to the 'try' at the start of the loop for this row
+                    print(f"DEBUG: Error processing row {i}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
                     if status_col_idx != -1:
                         self._update_cell(spreadsheet_id, sheet_name, i + 1, status_col_idx + 1, f"Error: {str(e)}")
                     skipped_count += 1
             
             # 3. Send email with generated posts if any were created
+            print(f"DEBUG: After loop. generated_files count: {len(generated_files)}")
             if generated_files:
+                print(f"DEBUG: Attempting to send email to {recipient_email} with {len(generated_files)} attachments.")
                 email_sent = self._send_email_with_attachments(
                     recipient_email,
                     "Your Instagram Posts",
                     f"Generated {len(generated_files)} Instagram posts.",
-                    generated_files
+                    [file_entry['png_id'] for file_entry in generated_files] # Use the correct file ID for the PNG
                 )
                 
+                print(f"DEBUG: Email sent status: {email_sent}")
                 if not email_sent:
-                    return {
+                    results_on_email_fail = {
                         "success": True,
                         "count": len(generated_files),
                         "message": f"Generated {len(generated_files)} Instagram posts but FAILED to send email to {recipient_email}. Check logs. Skipped {skipped_count} rows.",
                         "files": generated_files
                     }
+                    print(f"DEBUG: Returning (email failed): {results_on_email_fail}")
+                    return results_on_email_fail
                 
-                return {
+                results_on_success = {
                     "success": True,
                     "count": len(generated_files),
                     "message": f"Generated {len(generated_files)} Instagram posts and sent to {recipient_email}. Skipped {skipped_count} rows.",
                     "files": generated_files
                 }
+                print(f"DEBUG: Returning (email success): {results_on_success}")
+                return results_on_success
             else:
-                return {
+                results_no_files = {
                     "success": False,
                     "count": 0,
                     "message": f"No posts were generated. Skipped {skipped_count} rows. Check your mappings and flag conditions."
                 }
+                print(f"DEBUG: Returning (no files generated): {results_no_files}")
+                return results_no_files
                 
         except Exception as e:
-            print(f"Error in generate_posts: {str(e)}")
+            print(f"DEBUG: CRITICAL Error in generate_posts (main try-except): {str(e)}")
             import traceback
             traceback.print_exc()
             raise HTTPException(
@@ -293,7 +374,7 @@ class InstagramService:
             ).execute()
         except Exception as e:
             print(f"Error updating cell: {str(e)}")
-    
+        
     def _get_sheet_data(self, spreadsheet_id: str, sheet_name: str) -> List[List[str]]:
         """Get data from a specific sheet in a spreadsheet."""
         try:
@@ -312,24 +393,37 @@ class InstagramService:
                 status_code=e.status_code,
                 detail=f"Error accessing spreadsheet: {str(e)}"
             )
-    
+        
     def _find_column_index(self, headers: List[str], column_name: str) -> int:
         """Find the index of a column by name (case-insensitive partial match)."""
         for i, header in enumerate(headers):
             if column_name.lower() in header.lower():
                 return i
         return -1
-    
+        
     def _generate_post_from_template(self, 
                                    template_id: str,
                                    text_replacements: Dict[str, str],
                                    folder_id: str,
                                    file_name: str,
-                                   image_content: Optional[bytes] = None) -> Optional[str]:
+                                   image_url: Optional[str] = None) -> Optional[tuple[str, str]]:
         """Generate a post image from the template and save to Drive."""
         try:
             print(f"Generating post from template {template_id}")
             print(f"Text replacements: {text_replacements}")
+            print(f"Target folder ID: {folder_id}")
+            
+            # Verify the folder ID is valid
+            try:
+                folder = self.drive_service.files().get(
+                    fileId=folder_id,
+                    fields='mimeType'
+                ).execute()
+                if folder.get('mimeType') != 'application/vnd.google-apps.folder':
+                    raise ValueError(f"Specified ID {folder_id} is not a folder")
+            except Exception as e:
+                print(f"Error verifying folder ID: {str(e)}")
+                raise ValueError(f"Invalid folder ID: {folder_id}. Please ensure you've selected a valid Google Drive folder.")
             
             # 1. Copy the template slide to a new presentation
             new_presentation = self.drive_service.files().copy(
@@ -363,23 +457,21 @@ class InstagramService:
                     }
                 })
             
-            # Replace image if image content is provided
-            if image_content:
+            # Replace image if image_url is provided
+            if image_url:
                 # First get the presentation to find images
                 slides = presentation.get('slides', [])
                 for i, slide in enumerate(slides):
                     slide_id = slide.get('objectId')
                     images = slide.get('pageElements', [])
-                    
                     for element in images:
                         if 'image' in element:
                             image_id = element.get('objectId')
-                            
-                            # Add request to replace the image
+                            # Add request to replace the image with the public URL
                             slides_requests.append({
                                 'replaceImage': {
                                     'imageObjectId': image_id,
-                                    'url': f"data:image/jpeg;base64,{base64.b64encode(image_content).decode('utf-8')}"
+                                    'url': image_url
                                 }
                             })
                             print(f"Found image to replace in slide {i+1}")
@@ -420,23 +512,28 @@ class InstagramService:
                 resumable=True
             )
             
-            file = self.drive_service.files().create(
+            png_file_id = self.drive_service.files().create(
                 body=file_metadata,
                 media_body=media,
                 fields='id'
+            ).execute().get('id') # Get the ID directly
+            
+            # 5. Rename the processed presentation (it's no longer temporary and is already in the correct folder_id)
+            processed_slide_name = f"Processed_{file_name}_{int(time.time())}" 
+            self.drive_service.files().update(
+                fileId=presentation_id,
+                body={'name': processed_slide_name}
             ).execute()
+            print(f"Renamed processed presentation to: {processed_slide_name} (ID: {presentation_id})")
             
-            # 5. Delete the temporary presentation
-            self.drive_service.files().delete(fileId=presentation_id).execute()
-            
-            return file.get('id')
+            return png_file_id, presentation_id
             
         except Exception as e:
             print(f"Error generating post from template: {str(e)}")
             import traceback
             traceback.print_exc()
             return None
-    
+        
     def _send_email_with_attachments(self, 
                                  to: str,
                                  subject: str,
@@ -462,11 +559,11 @@ class InstagramService:
                     file = self.drive_service.files().get(fileId=file_id, fields="name").execute()
                     file_name = file.get('name', f"file_{file_id}")
                     
-                    # Get the file content directly
-                    file_content = self.drive_service.files().get_media(fileId=file_id).execute()
+                    # Fetch file content
+                    request = self.drive_service.files().get_media(fileId=file_id).execute()
                     
                     # Attach to message
-                    attachment = MIMEImage(file_content, _subtype='png')
+                    attachment = MIMEImage(request, _subtype='png')
                     attachment.add_header('Content-Disposition', f'attachment; filename="{file_name}"')
                     attachment.add_header('X-Attachment-Id', file_id)
                     attachment.add_header('Content-ID', f'<{file_id}>')

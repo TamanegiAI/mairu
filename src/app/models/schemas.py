@@ -82,9 +82,49 @@ class InstagramPostRequest(BaseModel):
     column_mappings: Optional[Dict[str, str]] = None  # Mapping of placeholders to column names
     process_flag_column: Optional[str] = None  # Column name to check for processing flag
     process_flag_value: Optional[str] = "yes"  # Value that indicates to process the row
+    background_image_id: Optional[str] = None  # Drive ID of the background image to use in the template
+    backup_folder_id: Optional[str] = None      # Specific Drive Folder ID for backing up generated posts
+
+class GeneratedFileInfo(BaseModel):
+    png_id: str
+    slide_id: str
+    name: str
 
 class InstagramPostResponse(BaseModel):
     success: bool
     count: int
     message: str
-    files: Optional[List[str]] = None
+    files: Optional[List[GeneratedFileInfo]] = None
+
+
+class MonitoringConfigRequest(BaseModel):
+    enabled: bool
+    trigger_folder_id: str
+    backup_folder_id: str
+    spreadsheet_id: str
+    monitoring_frequency_minutes: int
+    status_column_name: Optional[str] = None # Name of the column in the spreadsheet for status updates
+    
+    # New fields for Instagram post generation specifics
+    sheet_name: str
+    slides_template_id: str
+    recipient_email: str
+    column_mappings: Optional[Dict[str, str]] = None  # Mapping of placeholders to column names
+    process_flag_column: Optional[str] = None  # Column name to check for processing flag
+    process_flag_value: Optional[str] = "yes"  # Value that indicates to process the row
+    background_image_id: Optional[str] = None  # Drive ID of the background image to use in templates
+
+class MonitoringConfigResponse(BaseModel):
+    success: bool
+    message: str
+    job_id: Optional[str] = None # ID of the scheduled job if enabled
+
+class MonitoringStatusResponse(BaseModel):
+    is_monitoring_active: bool
+    status_message: str
+    last_check_timestamp: Optional[datetime] = None
+    last_processed_image_name: Optional[str] = None
+    last_processed_image_status: Optional[str] = None # e.g., "Detected", "Processing", "Sent", "Failed"
+    last_processed_timestamp: Optional[datetime] = None
+    error_message: Optional[str] = None
+    current_config: Optional[MonitoringConfigRequest] = None # To send back current config with status

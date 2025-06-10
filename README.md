@@ -13,6 +13,20 @@ This project is a **Chrome extension** that automates document generation and em
 ✅ **Token management**: Stores and refreshes access tokens automatically  
 ✅ **SQLite database integration** to store user tokens, mappings, and email history  
 
+## 🎥 Video Tutorial
+
+**Watch the full tutorial on YouTube**: [Image + Quote Automation with Google Slides](https://youtu.be/momZTxYmLA8)
+
+This comprehensive video tutorial walks you through:
+- How the image + quote automation works
+- Using Google Slides as a design engine
+- Automatically replacing text and images
+- Exporting the final designs
+- Sending them via email automatically
+- How to customize this system for your use case
+
+Perfect for content creators, social media managers, and anyone wanting to automate their visual content creation!
+
 ## Project Structure
 
 ```
@@ -57,13 +71,20 @@ pip install -r requirements.txt
 pip install -r src/app/frontend/requirements.txt
 ```
 
-### 2️⃣ Create a .env file
-```
-GOOGLE_CLIENT_ID=your_client_id
-GOOGLE_CLIENT_SECRET=your_client_secret
-GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback
-DATABASE_URL=sqlite:///./app.db
-```
+### 2️⃣ Set up Google OAuth credentials
+1. **Download credentials from Google Cloud Console**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select existing one
+   - Enable Google Sheets, Gmail, Drive, and Slides APIs
+   - Create OAuth 2.0 credentials
+   - Download the JSON file and rename it to `credentials.json`
+   - Place it in the project root directory
+
+2. **Alternatively, create a .env file**:
+   ```bash
+   cp env.example .env
+   # Edit .env with your credentials
+   ```
 
 ### 3️⃣ Run the database migration
 ```bash
@@ -156,4 +177,25 @@ This project uses:
 - FastAPI for the backend API
 - Streamlit for the web UI frontend
 - Google API libraries for integrating with Google services
+
+## 📄 License
+
+This project is licensed under a **Custom Non-Commercial License**:
+- ✅ **Free for personal, educational, and non-commercial use**
+- ✅ **Open source code** - you can view, modify, and learn from it
+- ✅ **Patent protection** included
+- ❌ **Commercial use requires a separate license**
+
+For commercial use, please contact the project owner.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to this project.
+
+## ⚠️ Important Security Notes
+
+- **Never commit** `credentials.json`, `token.json`, or `.env` files
+- **Keep your Google API credentials secure**
+- **Use test emails** when testing email functionality
+- **Review the `.gitignore`** before committing changes
 

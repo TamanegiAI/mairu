@@ -19,7 +19,10 @@ from src.app.models.schemas import (
     CancelScheduledEmailResponse,
     DriveFile,
     InstagramPostRequest,
-    InstagramPostResponse
+    InstagramPostResponse,
+    MonitoringConfigRequest,
+    MonitoringConfigResponse,
+    MonitoringStatusResponse
 )
 from src.app.dependencies import get_google_auth
 from src.app.services.sheets import GoogleSheetsService
@@ -28,6 +31,7 @@ from src.app.services.gmail import GmailService
 from src.app.services.scheduler import email_scheduler
 from src.app.services.drive import DriveService
 from src.app.services.instagram import InstagramService
+from src.app.services.monitoring_service import folder_monitoring_service
 from src.app.services.token_store import TokenStore
 from typing import List, Optional
 from datetime import datetime, timedelta
@@ -553,7 +557,8 @@ async def search_drive(
 async def generate_instagram_posts(
     request: InstagramPostRequest,
     db: Session = Depends(get_db),
-    auth: GoogleAuth = Depends(get_google_auth)
+    auth: GoogleAuth = Depends(get_google_auth),
+    authorization: Optional[str] = Header(None) # Keep Authorization header for consistency
 ):
     """Generate Instagram posts from spreadsheet data."""
     try:
@@ -598,7 +603,7 @@ async def generate_instagram_posts(
         }
         
         # Generate Instagram posts - pass the complete token info
-        instagram_service = InstagramService(complete_token_info)
+        instagram_service = InstagramService(complete_token_info) # Removed db argument
         result = instagram_service.generate_posts(
             spreadsheet_id=request.spreadsheet_id,
             sheet_name=request.sheet_name,
@@ -607,10 +612,28 @@ async def generate_instagram_posts(
             recipient_email=request.recipient_email,
             column_mappings=request.column_mappings or {},
             process_flag_column=request.process_flag_column,
-            process_flag_value=request.process_flag_value or "yes"
+            process_flag_value=request.process_flag_value or "yes",
+            background_image_id=request.background_image_id, # Updated to use background_image_id
+            backup_folder_id=request.backup_folder_id # Pass the backup folder ID
+            # image_url and update_status_column are optional in generate_posts
+            # and not explicitly in InstagramPostRequest, so they will be None by default
         )
         
-        return result
+        # The generate_posts method returns a dict like: 
+        # {"success": True/False, "count": N, "files": [...], "message": "..."}
+        # We need to adapt this to InstagramPostResponse which expects count and files.
+        if result.get("success"):
+            return InstagramPostResponse(
+                success=result.get("success"),
+                count=result.get("count", 0),
+                message=result.get("message", "Posts generated successfully."), # Provide a default if message is somehow missing
+                files=result.get("files", [])
+            )
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=result.get("message", "Failed to generate Instagram posts due to an internal error.")
+            )
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -618,3 +641,82 @@ async def generate_instagram_posts(
             status_code=500,
             detail=f"Failed to generate Instagram posts: {str(e)}"
         )
+
+
+# --- Folder Monitoring Endpoints ---
+
+@app.post("/monitoring/config", response_model=MonitoringConfigResponse)
+async def configure_monitoring(
+    request: MonitoringConfigRequest,
+    db: Session = Depends(get_db),
+    auth: GoogleAuth = Depends(get_google_auth),
+    authorization: Optional[str] = Header(None)
+):
+    try:
+        token_info = None
+        if authorization and authorization.startswith("Bearer "):
+            access_token = authorization.replace("Bearer ", "")
+            stored_tokens = TokenStore.get_latest_tokens()
+            refresh_token = stored_tokens.get('refresh_token') if stored_tokens else None
+            token_info = {
+                'token': access_token,
+                'refresh_token': refresh_token,
+                'token_uri': 'https://oauth2.googleapis.com/token',
+                'client_id': auth.client_id,
+                'client_secret': auth.client_secret,
+                'scopes': auth.SCOPES
+            }
+        
+        if not token_info:
+            stored_tokens = TokenStore.get_latest_tokens()
+            if not stored_tokens or not stored_tokens.get('token'):
+                raise HTTPException(status_code=401, detail="Authentication required.")
+            token_info = {
+                'token': stored_tokens.get('token'),
+                'refresh_token': stored_tokens.get('refresh_token'),
+                'token_uri': 'https://oauth2.googleapis.com/token',
+                'client_id': auth.client_id,
+                'client_secret': auth.client_secret,
+                'scopes': auth.SCOPES
+            }
+
+        valid_token_info = await auth.validate_and_refresh_token(token_info)
+        if not valid_token_info or not valid_token_info.get('token'):
+             raise HTTPException(status_code=401, detail="Invalid or expired token after validation.")
+
+        result = await folder_monitoring_service.update_configuration(request, auth, valid_token_info)
+        return MonitoringConfigResponse(**result)
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to configure monitoring: {str(e)}")
+
+@app.get("/monitoring/status", response_model=MonitoringStatusResponse)
+async def get_monitoring_status():
+    try:
+        status = folder_monitoring_service.get_status()
+        # Convert Pydantic model in status to dict if necessary for response model compatibility
+        if status.get('current_config') and not isinstance(status['current_config'], dict):
+             status['current_config'] = status['current_config'].dict()
+        return MonitoringStatusResponse(**status)
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error fetching monitoring status: {str(e)}") 
+        # Return a generic error response or a more specific one if appropriate
+        return MonitoringStatusResponse(
+            is_monitoring_active=False,
+            status_message="Error fetching status.",
+            error_message=str(e)
+        )
+
+# --- End Folder Monitoring Endpoints ---
+
+
+# Add more endpoints here as needed
+
+@app.on_event("shutdown")
+def shutdown_event():
+    print("Application shutdown: stopping schedulers...")
+    email_scheduler.scheduler.shutdown(wait=False)
+    folder_monitoring_service.shutdown() # Gracefully shutdown the monitoring scheduler
+    print("Schedulers stopped.")
