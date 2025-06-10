@@ -13,6 +13,20 @@ This project is a **Chrome extension** that automates document generation and em
 ✅ **Token management**: Stores and refreshes access tokens automatically  
 ✅ **SQLite database integration** to store user tokens, mappings, and email history  
 
+## 🎥 Video Tutorial
+
+**Watch the full tutorial on YouTube**: [Image + Quote Automation with Google Slides](https://youtu.be/momZTxYmLA8)
+
+This comprehensive video tutorial walks you through:
+- How the image + quote automation works
+- Using Google Slides as a design engine
+- Automatically replacing text and images
+- Exporting the final designs
+- Sending them via email automatically
+- How to customize this system for your use case
+
+Perfect for content creators, social media managers, and anyone wanting to automate their visual content creation!
+
 ## Project Structure
 
 ```
