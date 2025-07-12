@@ -9,6 +9,7 @@ import json
 import os
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from typing import Optional
 
 class GoogleAuth:
     SCOPES = [
@@ -16,7 +17,6 @@ class GoogleAuth:
         'https://www.googleapis.com/auth/documents',
         'https://www.googleapis.com/auth/gmail.send',
         'https://www.googleapis.com/auth/drive',
-        'https://www.googleapis.com/auth/drive.readonly',  # Explicitly added for Google compatibility
         'https://www.googleapis.com/auth/presentations',
     ]
 
@@ -119,7 +119,13 @@ class GoogleAuth:
                 detail=f"Failed to create authorization URL: {str(e)}"
             )
 
-    def get_tokens(self, code: str) -> dict:
+    def get_tokens(self, code: str, received_scopes_str: Optional[str] = None) -> dict:
+        
+        scopes_to_use = self.SCOPES
+        if received_scopes_str:
+            print(f"🔍 Using scopes from callback URL: {received_scopes_str.split()}")
+            scopes_to_use = received_scopes_str.split(' ')
+
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -130,68 +136,24 @@ class GoogleAuth:
                     "redirect_uris": [self.redirect_uri],
                 }
             },
-            scopes=self.SCOPES
+            scopes=scopes_to_use
         )
         flow.redirect_uri = self.redirect_uri
         
         try:
             flow.fetch_token(code=code)
+            print("✅ Token fetched successfully!")
         except Exception as e:
-            error_str = str(e)
-            if "Scope has changed" in error_str:
-                print(f"Warning: {error_str}")
-                
-                # Extract the new scopes from the error message
-                received_scopes = str(e).split("to ")[-1].strip('"').split()
-                received_scopes_set = set(received_scopes)
-                
-                # Define our required scopes (excluding drive.readonly for comparison)
-                required_scopes = {
-                    'https://www.googleapis.com/auth/spreadsheets',
-                    'https://www.googleapis.com/auth/documents',
-                    'https://www.googleapis.com/auth/gmail.send',
-                    'https://www.googleapis.com/auth/drive',  # We only need full drive access
-                    'https://www.googleapis.com/auth/presentations',
-                }
-                
-                # Check if all our required scopes are in the received scopes
-                missing_scopes = required_scopes - received_scopes_set
-                
-                # Special case: if we have full drive access, we don't need drive.readonly
-                if 'https://www.googleapis.com/auth/drive' in received_scopes_set:
-                    received_scopes_set.discard('https://www.googleapis.com/auth/drive.readonly')
-                
-                if missing_scopes:
-                    print(f"❌ ERROR: Missing required scopes: {missing_scopes}")
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Missing required scopes: {', '.join(missing_scopes)}"
-                    )
-                
-                print("✅ All required scopes are covered, continuing with authentication")
-                
-                # Re-create flow with the scopes Google returned
-                flow = Flow.from_client_config(
-                    {
-                        "web": {
-                            "client_id": self.client_id,
-                            "client_secret": self.client_secret,
-                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                            "token_uri": "https://oauth2.googleapis.com/token",
-                            "redirect_uris": [self.redirect_uri],
-                        }
-                    },
-                    scopes=received_scopes  # Use the scopes Google returned
-                )
-                flow.redirect_uri = self.redirect_uri
-                flow.fetch_token(code=code)
-            else:
-                raise e
+            print(f"❌ Failed to fetch token: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Authentication failed: {str(e)}"
+            )
         
         token_info = {
             'token': flow.credentials.token,
             'refresh_token': flow.credentials.refresh_token,
-            'token_uri': flow.credentials.token_uri,
+            'token_uri': 'https://oauth2.googleapis.com/token',
             'client_id': flow.credentials.client_id,
             'client_secret': flow.credentials.client_secret,
             'scopes': flow.credentials.scopes
@@ -201,7 +163,8 @@ class GoogleAuth:
         TokenStore.save_tokens(
             access_token=flow.credentials.token,
             refresh_token=flow.credentials.refresh_token,
-            expiry=flow.credentials.expiry
+            expiry=flow.credentials.expiry,
+            scopes=flow.credentials.scopes
         )
         
         return token_info
@@ -268,7 +231,8 @@ class GoogleAuth:
             TokenStore.save_tokens(
                 access_token=new_token_info['token'],
                 refresh_token=new_token_info['refresh_token'],
-                expiry=credentials.expiry
+                expiry=credentials.expiry,
+                scopes=credentials.scopes
             )
             print("✅ Refreshed token saved to file")
 
@@ -294,19 +258,24 @@ class GoogleAuth:
             stored_scopes = set(token_info.get('scopes', []))
             current_scopes = set(self.SCOPES)
             
-            # Create a helper map to check for base scope presence
-            # This handles cases where Google adds .readonly variants
-            scope_base_map = {}
-            for scope in stored_scopes:
-                base_scope = scope.split('.')[0] if '.' in scope else scope
-                scope_base_map[base_scope] = True
+            print(f"🔍 DEBUG: Stored scopes: {stored_scopes}")
+            print(f"🔍 DEBUG: Required scopes: {current_scopes}")
             
-            # Check if all required scopes are covered (either exact or with a variant)
-            missing_scopes = []
-            for required_scope in current_scopes:
-                base_scope = required_scope.split('.')[0] if '.' in required_scope else required_scope
-                if required_scope not in stored_scopes and base_scope not in scope_base_map:
-                    missing_scopes.append(required_scope)
+            # Core required scopes (excluding drive.readonly which is optional)
+            core_required_scopes = {
+                'https://www.googleapis.com/auth/spreadsheets',
+                'https://www.googleapis.com/auth/documents',
+                'https://www.googleapis.com/auth/gmail.send',
+                'https://www.googleapis.com/auth/drive',
+                'https://www.googleapis.com/auth/presentations',
+            }
+            
+            # Check if all core required scopes are present
+            missing_scopes = core_required_scopes - stored_scopes
+            
+            # Special case: If we have full drive access, we don't need drive.readonly
+            if 'https://www.googleapis.com/auth/drive' in stored_scopes:
+                missing_scopes.discard('https://www.googleapis.com/auth/drive.readonly')
             
             if missing_scopes:
                 print(f"⚠️ Missing required scopes: {missing_scopes}")
@@ -317,10 +286,15 @@ class GoogleAuth:
                     detail="Missing required permissions. Please re-authenticate."
                 )
                 
+            print("✅ All required scopes present")
+            
             if self.is_token_expired(token_info):
                 print("🔄 Token expired, attempting refresh...")
                 return self.refresh_token(token_info)
             return token_info
+        except HTTPException:
+            # Re-raise HTTPExceptions as-is
+            raise
         except Exception as e:
             print(f"❌ Token validation failed: {str(e)}")
             raise HTTPException(

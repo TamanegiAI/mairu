@@ -2,7 +2,7 @@
 import os
 import json
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # Path to token storage file (in root directory)
 TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'token.json')
@@ -11,13 +11,14 @@ class TokenStore:
     """Simple file-based token storage service."""
     
     @staticmethod
-    def save_tokens(access_token: str, refresh_token: str, expiry: Optional[datetime] = None) -> Dict[str, Any]:
+    def save_tokens(access_token: Optional[str], refresh_token: Optional[str], expiry: Optional[datetime] = None, scopes: Optional[List[str]] = None) -> Dict[str, Any]:
         """Save tokens to file."""
         token_data = {
             'access_token': access_token,
             'refresh_token': refresh_token,
             'expiry': expiry.isoformat() if expiry else None,
-            'created_at': datetime.utcnow().isoformat()
+            'created_at': datetime.utcnow().isoformat(),
+            'scopes': scopes or []
         }
         
         try:
@@ -42,7 +43,8 @@ class TokenStore:
                 'token': tokens.get('access_token'),
                 'refresh_token': tokens.get('refresh_token'),
                 'expiry': tokens.get('expiry'),
-                'created_at': tokens.get('created_at')
+                'created_at': tokens.get('created_at'),
+                'scopes': tokens.get('scopes', [])
             }
         except Exception as e:
             print(f"❌ Failed to read tokens from file: {str(e)}")

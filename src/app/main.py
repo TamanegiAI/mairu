@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
@@ -69,12 +69,15 @@ async def get_auth_url(auth: GoogleAuth = Depends(get_google_auth)):
 @app.get("/oauth2callback")
 async def auth_callback(
     code: str,
+    scope: str = Query(None),
     db: Session = Depends(get_db),
     auth: GoogleAuth = Depends(get_google_auth)
 ):
     try:
         print(f"Processing auth code: {code[:10]}...")
-        
+        if scope:
+            print(f"✅ Received scopes from callback: {scope.split()}")
+
         # Check if we already have recent tokens
         existing_tokens = TokenStore.get_latest_tokens()
         if existing_tokens and existing_tokens.get('created_at') and \
@@ -87,7 +90,7 @@ async def auth_callback(
         TokenStore.clear_tokens()
         
         try:
-            tokens = auth.get_tokens(code)
+            tokens = auth.get_tokens(code, received_scopes_str=scope)
             print("✅ Authentication successful with token: " + tokens["token"][:15] + "...")
             return {"message": "Authentication successful", "access_token": tokens["token"]}
         except Exception as e:
